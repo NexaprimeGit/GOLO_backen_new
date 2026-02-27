@@ -22,5 +22,18 @@ export const KAFKA_TOPICS = {
   AD_ERROR: 'ad.error',
   
   // Dead Letter Queue
-  AD_DLQ: 'ad.dlq'
+  AD_DLQ: 'ad.dlq',
+
+
+  // User Events
+  USER_REGISTERED: 'user.registered',
+  USER_LOGGED_IN: 'user.logged.in',
+  USER_LOGGED_OUT: 'user.logged.out',
+  USER_UPDATED: 'user.updated',
+  USER_DELETED: 'user.deleted',
+  
+  // Ad-User integration
+  USER_ADS_FETCHED: 'user.ads.fetched',
+  USER_ADS_CREATED: 'user.ads.created',
+
 };

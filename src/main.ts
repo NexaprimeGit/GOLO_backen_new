@@ -45,7 +45,7 @@ async function bootstrap() {
   
   // Start HTTP server
   const port = configService.get('config.service.port');
-  await app.listen(port);
+  await app.listen(process.env.PORT || 3000);
   
   logger.log(`Ads microservice is running on port ${port}`);
   logger.log(`Kafka brokers: ${kafkaConfig.brokers.join(', ')}`);

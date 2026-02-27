@@ -31,6 +31,7 @@ import { LostFoundDto } from './category-dtos/lost-found.dto';
 import { PersonalDto } from './category-dtos/personal.dto';
 import { ContactInfoDto } from './contact-info.dto';
 import { MetadataDto } from './metadata.dto';
+import { Prop } from '@nestjs/mongoose';
 
 export class CreateAdDto {
   @IsString()
@@ -55,9 +56,10 @@ export class CreateAdDto {
 
   @IsString()
   @IsNotEmpty()
+  @IsOptional()
   userId: string;
 
-  @IsEnum(['Merchant', 'Customer', 'Admin'])
+  @IsEnum(['Customer', 'Admin'])  // ← Should match your schema
   userType: string;
 
   @IsArray()

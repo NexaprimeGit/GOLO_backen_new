@@ -22,6 +22,6 @@ export class ContactInfoDto {
     website?: string;  // Add this field
 
   @IsOptional()
-  @IsEnum(['phone', 'email', 'whatsapp'])
+  @IsEnum(['phone', 'email', 'whatsapp','website'])
   preferredContactMethod?: string;
 }

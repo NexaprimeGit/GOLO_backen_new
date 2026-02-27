@@ -1,10 +1,18 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus } from '@nestjs/common';
+import { 
+  Controller, Get, Post, Put, Delete, Body, Param, Query, 
+  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards 
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdsService } from './ads.service';
 import { CreateAdDto } from './dto/create-ad.dto';
 import { UpdateAdDto } from './dto/update-ad.dto';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { KafkaService } from '../kafka/kafka.service';
 import { v4 as uuidv4 } from 'uuid';
+import { UserRole } from '../users/schemas/user.schema';
 
 @Controller('ads')
 export class AdsController {
@@ -15,74 +23,7 @@ export class AdsController {
     private readonly kafkaService: KafkaService
   ) {}
 
-  /**
-   * Create a new ad via HTTP (REST API)
-   * This is useful for direct API calls, but in microservices architecture,
-   * you might want to use Kafka for all operations
-   */
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @UsePipes(new ValidationPipe({ transform: true }))
-  async createAd(@Body() createAdDto: CreateAdDto) {
-    this.logger.log(`REST: Creating new ad for user: ${createAdDto.userId}`);
-    
-    try {
-      const ad = await this.adsService.createAd(createAdDto);
-      
-      // Emit event to Kafka
-      await this.adsService.emitAdCreated(ad, uuidv4());
-      
-      return {
-        success: true,
-        message: 'Ad created successfully',
-        data: ad,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      this.logger.error(`REST: Error creating ad: ${error.message}`);
-      
-      return {
-        success: false,
-        message: 'Failed to create ad',
-        error: error.message,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  /**
-   * Create ad via Kafka - This endpoint sends a Kafka message instead of direct creation
-   * Useful for async operations
-   */
-  @Post('async')
-  @HttpCode(HttpStatus.ACCEPTED)
-  async createAdAsync(@Body() createAdDto: CreateAdDto) {
-    this.logger.log(`REST: Sending async ad creation request for user: ${createAdDto.userId}`);
-    
-    const correlationId = uuidv4();
-    
-    try {
-      // Send to Kafka instead of direct creation
-      await this.kafkaService.send(KAFKA_TOPICS.AD_CREATE, createAdDto, correlationId);
-      
-      return {
-        success: true,
-        message: 'Ad creation request submitted successfully',
-        correlationId,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      this.logger.error(`REST: Error sending async ad creation: ${error.message}`);
-      
-      return {
-        success: false,
-        message: 'Failed to submit ad creation request',
-        error: error.message,
-        correlationId,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
+  // ==================== PUBLIC ROUTES (No Auth Required) ====================
 
   /**
    * Get all ads with pagination
@@ -111,7 +52,6 @@ export class AdsController {
           sortOrder || 'desc'
         );
       } else {
-        // You might want to add a getAllAds method to service
         result = await this.adsService.searchAds('', {}, pageNum, limitNum);
       }
       
@@ -291,7 +231,260 @@ export class AdsController {
   }
 
   /**
-   * Get ads by user
+   * Get single ad by ID
+   */
+  @Get(':adId')
+  async getAdById(@Param('adId') adId: string) {
+    this.logger.log(`REST: Getting ad by ID: ${adId}`);
+    
+    try {
+      const ad = await this.adsService.getAdById(adId);
+      
+      // Increment view count asynchronously
+      this.adsService.incrementViewCount(adId).catch(error => {
+        this.logger.error(`Error incrementing view count: ${error.message}`);
+      });
+      
+      return {
+        success: true,
+        data: ad,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error getting ad: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to get ad',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Get promoted ads
+   */
+  @Get('promoted/all')
+  async getPromotedAds(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10'
+  ) {
+    this.logger.log('REST: Getting promoted ads');
+    
+    try {
+      const pageNum = parseInt(page, 10);
+      const limitNum = parseInt(limit, 10);
+      
+      const result = await this.adsService.searchAds('', {}, pageNum, limitNum);
+      
+      const promotedAds = result.ads.filter(ad => ad.isPromoted && ad.promotedUntil > new Date());
+      
+      return {
+        success: true,
+        data: promotedAds,
+        pagination: {
+          total: promotedAds.length,
+          page: pageNum,
+          limit: limitNum,
+          pages: Math.ceil(promotedAds.length / limitNum)
+        },
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error getting promoted ads: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to get promoted ads',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Get ads statistics
+   */
+  @Get('stats/overview')
+  async getAdsStatistics() {
+    this.logger.log('REST: Getting ads statistics');
+    
+    try {
+      const totalAds = await this.adsService.searchAds('', {}, 1, 1);
+      
+      const categories = [
+        'Education', 'Matrimonial', 'Vehicle', 'Business', 'Travel',
+        'Astrology', 'Property', 'Public Notice', 'Lost & Found',
+        'Service', 'Personal', 'Employment', 'Pets', 'Mobiles',
+        'Electronics & Home appliances', 'Furniture', 'Other'
+      ];
+      
+      const categoryStats = await Promise.all(
+        categories.map(async (category) => {
+          const result = await this.adsService.getAdsByCategory(category, 1, 1);
+          return {
+            category,
+            count: result.total
+          };
+        })
+      );
+      
+      return {
+        success: true,
+        data: {
+          totalAds: totalAds.total,
+          activeAds: totalAds.total,
+          promotedAds: 0,
+          categoryDistribution: categoryStats
+        },
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error getting statistics: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to get statistics',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Health check endpoint
+   */
+  @Get('health/status')
+  healthCheck() {
+    return {
+      status: 'healthy',
+      service: 'ads-microservice',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    };
+  }
+
+  // ==================== USER ROUTES (Any logged-in user) ====================
+
+  /**
+   * Create a new ad (Authenticated users only)
+   */
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async createAd(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
+    this.logger.log(`REST: Creating new ad for user: ${user.id}`);
+    
+    try {
+      // Set userId from token (security - prevents spoofing)
+      createAdDto.userId = user.id;
+      createAdDto.userType = user.role === UserRole.ADMIN ? 'Admin' : 'User';
+      
+      const ad = await this.adsService.createAd(createAdDto);
+      
+      // Emit event to Kafka
+      await this.adsService.emitAdCreated(ad, uuidv4());
+      
+      return {
+        success: true,
+        message: 'Ad created successfully',
+        data: ad,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error creating ad: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to create ad',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Create ad via Kafka (async) - Authenticated users only
+   */
+  @Post('async')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(JwtAuthGuard)
+  async createAdAsync(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
+    this.logger.log(`REST: Sending async ad creation request for user: ${user.id}`);
+    
+    // Set userId from token (security)
+    createAdDto.userId = user.id;
+    createAdDto.userType = user.role === UserRole.ADMIN ? 'Admin' : 'User';
+    
+    const correlationId = uuidv4();
+    
+    try {
+      await this.kafkaService.send(KAFKA_TOPICS.AD_CREATE, createAdDto, correlationId);
+      
+      return {
+        success: true,
+        message: 'Ad creation request submitted successfully',
+        correlationId,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error sending async ad creation: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to submit ad creation request',
+        error: error.message,
+        correlationId,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Get ads by current user
+   */
+  @Get('user/me')
+  @UseGuards(JwtAuthGuard)
+  async getMyAds(
+    @CurrentUser() user: any,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10'
+  ) {
+    this.logger.log(`REST: Getting ads for current user: ${user.id}`);
+    
+    try {
+      const pageNum = parseInt(page, 10);
+      const limitNum = parseInt(limit, 10);
+      
+      const result = await this.adsService.getAdsByUser(user.id, pageNum, limitNum);
+      
+      return {
+        success: true,
+        data: result.ads,
+        pagination: {
+          total: result.total,
+          page: pageNum,
+          limit: limitNum,
+          pages: Math.ceil(result.total / limitNum)
+        },
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error getting user ads: ${error.message}`);
+      
+      return {
+        success: false,
+        message: 'Failed to get your ads',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Get ads by specific user (public - anyone can view)
    */
   @Get('user/:userId')
   async getAdsByUser(
@@ -331,59 +524,21 @@ export class AdsController {
   }
 
   /**
-   * Get single ad by ID
-   */
-  @Get(':adId')
-  async getAdById(@Param('adId') adId: string) {
-    this.logger.log(`REST: Getting ad by ID: ${adId}`);
-    
-    try {
-      const ad = await this.adsService.getAdById(adId);
-      
-      // Increment view count asynchronously
-      this.adsService.incrementViewCount(adId).catch(error => {
-        this.logger.error(`Error incrementing view count: ${error.message}`);
-      });
-      
-      return {
-        success: true,
-        data: ad,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      this.logger.error(`REST: Error getting ad: ${error.message}`);
-      
-      return {
-        success: false,
-        message: 'Failed to get ad',
-        error: error.message,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  /**
-   * Update ad
+   * Update ad (Authenticated users only - can only update their own)
    */
   @Put(':adId')
+  @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true }))
   async updateAd(
     @Param('adId') adId: string,
-    @Body('userId') userId: string,
-    @Body() updateData: UpdateAdDto
+    @Body() updateData: UpdateAdDto,
+    @CurrentUser() user: any
   ) {
-    this.logger.log(`REST: Updating ad: ${adId} by user: ${userId}`);
-    
-    if (!userId) {
-      return {
-        success: false,
-        message: 'userId is required',
-        timestamp: new Date().toISOString()
-      };
-    }
+    this.logger.log(`REST: Updating ad: ${adId} by user: ${user.id}`);
     
     try {
-      const updatedAd = await this.adsService.updateAd(adId, userId, updateData);
+      // Users can only update their own ads (handled in service)
+      const updatedAd = await this.adsService.updateAd(adId, user.id, updateData);
       
       // Emit update event
       await this.adsService.emitAdUpdated(updatedAd, uuidv4());
@@ -407,31 +562,24 @@ export class AdsController {
   }
 
   /**
-   * Update ad via Kafka (async)
+   * Update ad via Kafka (async) - Authenticated users only
    */
   @Put(':adId/async')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(JwtAuthGuard)
   async updateAdAsync(
     @Param('adId') adId: string,
-    @Body('userId') userId: string,
-    @Body() updateData: UpdateAdDto
+    @Body() updateData: UpdateAdDto,
+    @CurrentUser() user: any
   ) {
     this.logger.log(`REST: Sending async update request for ad: ${adId}`);
-    
-    if (!userId) {
-      return {
-        success: false,
-        message: 'userId is required',
-        timestamp: new Date().toISOString()
-      };
-    }
     
     const correlationId = uuidv4();
     
     try {
       await this.kafkaService.send(KAFKA_TOPICS.AD_UPDATE, {
         adId,
-        userId,
+        userId: user.id,
         updateData
       }, correlationId);
       
@@ -455,28 +603,21 @@ export class AdsController {
   }
 
   /**
-   * Delete ad (soft delete)
+   * Delete ad (Authenticated users only - can only delete their own)
    */
   @Delete(':adId')
+  @UseGuards(JwtAuthGuard)
   async deleteAd(
     @Param('adId') adId: string,
-    @Query('userId') userId: string
+    @CurrentUser() user: any
   ) {
-    this.logger.log(`REST: Deleting ad: ${adId} by user: ${userId}`);
-    
-    if (!userId) {
-      return {
-        success: false,
-        message: 'userId is required',
-        timestamp: new Date().toISOString()
-      };
-    }
+    this.logger.log(`REST: Deleting ad: ${adId} by user: ${user.id}`);
     
     try {
-      await this.adsService.deleteAd(adId, userId);
+      await this.adsService.deleteAd(adId, user.id);
       
       // Emit delete event
-      await this.adsService.emitAdDeleted(adId, userId, uuidv4());
+      await this.adsService.emitAdDeleted(adId, user.id, uuidv4());
       
       return {
         success: true,
@@ -496,30 +637,23 @@ export class AdsController {
   }
 
   /**
-   * Delete ad via Kafka (async)
+   * Delete ad via Kafka (async) - Authenticated users only
    */
   @Delete(':adId/async')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(JwtAuthGuard)
   async deleteAdAsync(
     @Param('adId') adId: string,
-    @Query('userId') userId: string
+    @CurrentUser() user: any
   ) {
     this.logger.log(`REST: Sending async delete request for ad: ${adId}`);
-    
-    if (!userId) {
-      return {
-        success: false,
-        message: 'userId is required',
-        timestamp: new Date().toISOString()
-      };
-    }
     
     const correlationId = uuidv4();
     
     try {
       await this.kafkaService.send(KAFKA_TOPICS.AD_DELETE, {
         adId,
-        userId
+        userId: user.id
       }, correlationId);
       
       return {
@@ -542,24 +676,17 @@ export class AdsController {
   }
 
   /**
-   * Promote an ad
+   * Promote an ad (Authenticated users only)
    */
   @Post(':adId/promote')
+  @UseGuards(JwtAuthGuard)
   async promoteAd(
     @Param('adId') adId: string,
-    @Body('userId') userId: string,
     @Body('package') promotionPackage: string,
-    @Body('duration') duration: number // in days
+    @Body('duration') duration: number,
+    @CurrentUser() user: any
   ) {
     this.logger.log(`REST: Promoting ad: ${adId} with package: ${promotionPackage}`);
-    
-    if (!userId) {
-      return {
-        success: false,
-        message: 'userId is required',
-        timestamp: new Date().toISOString()
-      };
-    }
     
     try {
       const promotedUntil = new Date();
@@ -571,12 +698,11 @@ export class AdsController {
         promotionPackage
       };
       
-      const updatedAd = await this.adsService.updateAd(adId, userId, updateData);
+      const updatedAd = await this.adsService.updateAd(adId, user.id, updateData);
       
-      // Emit promotion event
       await this.kafkaService.emit(KAFKA_TOPICS.AD_PROMOTED, {
         adId,
-        userId,
+        userId: user.id,
         promotionPackage,
         promotedUntil,
         timestamp: new Date().toISOString()
@@ -600,48 +726,31 @@ export class AdsController {
     }
   }
 
+  // ==================== ADMIN ROUTES (Admin only) ====================
+
   /**
-   * Get promoted ads
+   * Admin: Delete any ad
    */
-  @Get('promoted/all')
-  async getPromotedAds(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
-  ) {
-    this.logger.log('REST: Getting promoted ads');
+  @Delete('admin/:adId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminDeleteAd(@Param('adId') adId: string) {
+    this.logger.log(`REST: Admin deleting ad: ${adId}`);
     
     try {
-      const pageNum = parseInt(page, 10);
-      const limitNum = parseInt(limit, 10);
-      
-      // You might want to add a specific method in service for promoted ads
-      const result = await this.adsService.searchAds(
-        '', 
-        {}, 
-        pageNum, 
-        limitNum
-      );
-      
-      // Filter promoted ads (you can optimize this with a database query)
-      const promotedAds = result.ads.filter(ad => ad.isPromoted && ad.promotedUntil > new Date());
+      await this.adsService.adminDeleteAd(adId);
       
       return {
         success: true,
-        data: promotedAds,
-        pagination: {
-          total: promotedAds.length,
-          page: pageNum,
-          limit: limitNum,
-          pages: Math.ceil(promotedAds.length / limitNum)
-        },
+        message: 'Ad deleted successfully by admin',
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      this.logger.error(`REST: Error getting promoted ads: ${error.message}`);
+      this.logger.error(`REST: Error in admin delete: ${error.message}`);
       
       return {
         success: false,
-        message: 'Failed to get promoted ads',
+        message: 'Failed to delete ad',
         error: error.message,
         timestamp: new Date().toISOString()
       };
@@ -649,66 +758,105 @@ export class AdsController {
   }
 
   /**
-   * Get ads statistics
+   * Admin: Get all ads (including inactive/deleted)
    */
-  @Get('stats/overview')
-  async getAdsStatistics() {
-    this.logger.log('REST: Getting ads statistics');
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminGetAllAds() {
+    this.logger.log('REST: Admin getting all ads');
     
     try {
-      // You might want to add aggregation methods in service
-      const totalAds = await this.adsService.searchAds('', {}, 1, 1);
-      
-      // Get category distribution (you should add a method in service for this)
-      const categories = [
-        'Education', 'Matrimonial', 'Vehicle', 'Business', 'Travel',
-        'Astrology', 'Property', 'Public Notice', 'Lost & Found',
-        'Service', 'Personal', 'Employment', 'Pets', 'Mobiles',
-        'Electronics & Home appliances', 'Furniture', 'Other'
-      ];
-      
-      const categoryStats = await Promise.all(
-        categories.map(async (category) => {
-          const result = await this.adsService.getAdsByCategory(category, 1, 1);
-          return {
-            category,
-            count: result.total
-          };
-        })
-      );
+      const ads = await this.adsService.adminGetAllAds();
       
       return {
         success: true,
-        data: {
-          totalAds: totalAds.total,
-          activeAds: totalAds.total, // You should add proper filtering
-          promotedAds: 0, // You should add proper counting
-          categoryDistribution: categoryStats
-        },
+        data: ads,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      this.logger.error(`REST: Error getting statistics: ${error.message}`);
+      this.logger.error(`REST: Error in admin get all: ${error.message}`);
       
       return {
         success: false,
-        message: 'Failed to get statistics',
+        message: 'Failed to get all ads',
         error: error.message,
         timestamp: new Date().toISOString()
       };
     }
   }
 
-  /**
-   * Health check endpoint
-   */
-  @Get('health/status')
-  healthCheck() {
+@Get('debug/user/:id')
+@UseGuards(JwtAuthGuard)
+async debugCheckUserInAds(@Param('id') id: string) {
+  try {
+    const exists = await this.adsService.verifyUser(id);
     return {
-      status: 'healthy',
-      service: 'ads-microservice',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime()
+      success: true,
+      data: { exists, userId: id },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
     };
   }
+}
+
+@Get('debug/user-check/:userId')
+@UseGuards(JwtAuthGuard)
+async debugUserCheck(@Param('userId') userId: string) {
+  try {
+    const exists = await this.adsService.verifyUser(userId);
+    const userModel = (this.adsService as any).userModel;
+    const count = await userModel.countDocuments();
+    const sample = await userModel.findOne().exec();
+    
+    return {
+      success: true,
+      data: {
+        userId,
+        exists,
+        totalUsersInAdsService: count,
+        sampleUser: sample ? { id: sample._id, email: sample.email } : null,
+        message: exists ? 'User found in AdsService' : 'User NOT found in AdsService'
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+@Post('debug-create')
+@UseGuards(JwtAuthGuard)
+async debugCreateAd(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
+  console.log('🔧 DEBUG CREATE AD CALLED');
+  console.log('User from token:', user);
+  console.log('DTO before:', JSON.stringify(createAdDto));
+  
+  // Set userId from token
+  createAdDto.userId = user.id;
+  createAdDto.userType = user.role === 'admin' ? 'Admin' : 'User';
+  
+  console.log('DTO after:', JSON.stringify(createAdDto));
+  
+  try {
+    const ad = await this.adsService.createAd(createAdDto);
+    return {
+      success: true,
+      message: 'Ad created successfully',
+      data: ad,
+    };
+  } catch (error) {
+    console.error('❌ Debug create error:', error);
+    return {
+      success: false,
+      message: 'Failed to create ad',
+      error: error.message,
+    };
+  }
+}
 }

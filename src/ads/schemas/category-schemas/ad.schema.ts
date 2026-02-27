@@ -42,7 +42,7 @@ export class Ad {
   @Prop({ required: true })
   userId: string;
 
-  @Prop({ required: true, enum: ['Merchant', 'Customer', 'Admin'] })
+  @Prop({ required: true, enum: ['Customer', 'Admin'] }) // ← Match your new roles
   userType: string;
 
   @Prop({ type: [String], required: true })

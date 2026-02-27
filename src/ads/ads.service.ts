@@ -7,159 +7,227 @@ import { UpdateAdDto } from './dto/update-ad.dto';
 import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { v4 as uuidv4 } from 'uuid';
+import { User, UserDocument } from 'src/users/schemas/user.schema';
 
 @Injectable()
 export class AdsService {
   private readonly logger = new Logger(AdsService.name);
+  
 
   constructor(
     @InjectModel(Ad.name) private adModel: Model<AdDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private kafkaService: KafkaService,
   ) {}
 
-  async createAd(createAdDto: CreateAdDto): Promise<Ad> {
-    this.logger.log(`Creating new ad for user: ${createAdDto.userId}`);
+async createAd(createAdDto: CreateAdDto): Promise<Ad> {
+  this.logger.log(`Creating new ad for user: ${createAdDto.userId}`);
 
-    // Determine which category data to use
-    let categorySpecificData = {};
-    
-    switch(createAdDto.category) {
-      case 'Vehicle':
-        categorySpecificData = createAdDto.vehicleData || {};
-        break;
-      case 'Property':
-        categorySpecificData = createAdDto.propertyData || {};
-        break;
-      case 'Service':
-        categorySpecificData = createAdDto.serviceData || {};
-        break;
-      case 'Mobiles':
-        categorySpecificData = createAdDto.mobileData || {};
-        break;
-      case 'Electronics & Home appliances':
-        categorySpecificData = createAdDto.electronicsData || {};
-        break;
-      case 'Furniture':
-        categorySpecificData = createAdDto.furnitureData || {};
-        break;
-      case 'Education':
-        categorySpecificData = createAdDto.educationData || {};
-        break;
-      case 'Pets':
-        categorySpecificData = createAdDto.petsData || {};
-        break;
-      case 'Matrimonial':
-        categorySpecificData = createAdDto.matrimonialData || {};
-        break;
-      case 'Business':
-        categorySpecificData = createAdDto.businessData || {};
-        break;
-      case 'Travel':
-        categorySpecificData = createAdDto.travelData || {};
-        break;
-      case 'Astrology':
-        categorySpecificData = createAdDto.astrologyData || {};
-        break;
-      case 'Employment':
-        categorySpecificData = createAdDto.employmentData || {};
-        break;
-      case 'Lost & Found':
-        categorySpecificData = createAdDto.lostFoundData || {};
-        break;
-      case 'Personal':
-        categorySpecificData = createAdDto.personalData || {};
-        break;
-      default:
-        categorySpecificData = {};
-    }
+  // =============================================
+  // NEW: Verify user exists before creating ad
+  // =============================================
+  const userExists = await this.verifyUser(createAdDto.userId);
+  this.logger.log(`User verification result: ${userExists}`);
+  if (!userExists) {
+    throw new BadRequestException(`User with ID ${createAdDto.userId} not found. Please register or login first.`);
+  }
+  this.logger.log(`User verified successfully: ${createAdDto.userId}`);
+  // =============================================
 
-    // Validate category-specific data
-    this.validateCategoryData(createAdDto.category, categorySpecificData);
-
-    // Calculate expiry date (default: 30 days from now)
-    const expiryDate = createAdDto.expiryDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-    // Check if coordinates are provided and valid
-    const hasValidCoordinates = 
-      createAdDto.latitude !== undefined && 
-      createAdDto.longitude !== undefined && 
-      !isNaN(Number(createAdDto.latitude)) && 
-      !isNaN(Number(createAdDto.longitude)) &&
-      Number(createAdDto.latitude) >= -90 && 
-      Number(createAdDto.latitude) <= 90 && 
-      Number(createAdDto.longitude) >= -180 && 
-      Number(createAdDto.longitude) <= 180;
-
-    // Prepare base ad data WITHOUT locationCoordinates
-    const adData: any = {
-      title: createAdDto.title,
-      description: createAdDto.description,
-      category: createAdDto.category,
-      subCategory: createAdDto.subCategory,
-      userId: createAdDto.userId,
-      userType: createAdDto.userType,
-      images: createAdDto.images,
-      videos: createAdDto.videos || [],
-      price: createAdDto.price,
-      negotiable: createAdDto.negotiable || false,
-      location: createAdDto.location,
-      city: createAdDto.city,
-      state: createAdDto.state,
-      pincode: createAdDto.pincode,
-      contactInfo: {
-        name: createAdDto.contactInfo.name,
-        phone: createAdDto.contactInfo.phone,
-        email: createAdDto.contactInfo.email,
-        whatsapp: createAdDto.contactInfo.whatsapp,
-        preferredContactMethod: createAdDto.contactInfo.preferredContactMethod || 'phone'
-      },
-      categorySpecificData,
-      tags: createAdDto.tags || [],
-      adId: uuidv4(),
-      status: 'active',
-      views: 0,
-      expiryDate,
-      isPromoted: createAdDto.isPromoted || false,
-      promotedUntil: createAdDto.promotedUntil,
-      promotionPackage: createAdDto.promotionPackage,
-      metadata: {
-        ip: createAdDto.metadata?.ip || '0.0.0.0',
-        userAgent: createAdDto.metadata?.userAgent || 'system',
-        platform: createAdDto.metadata?.platform || 'api',
-        deviceId: createAdDto.metadata?.deviceId
-      },
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    // ONLY add locationCoordinates if we have valid coordinates
-    if (hasValidCoordinates) {
-      adData.locationCoordinates = {
-        type: 'Point',
-        coordinates: [
-          Number(createAdDto.longitude), 
-          Number(createAdDto.latitude)
-        ]
-      };
-      this.logger.debug(`Added location coordinates: ${JSON.stringify(adData.locationCoordinates)}`);
-    } else {
-      // Explicitly NOT adding locationCoordinates field
-      this.logger.debug('No valid coordinates provided - skipping locationCoordinates field');
-    }
-
-    // Log what we're saving (for debugging)
-    this.logger.debug(`Saving ad with fields: ${Object.keys(adData).join(', ')}`);
-    this.logger.debug(`Has locationCoordinates: ${hasValidCoordinates}`);
-
-    // Create ad in database
-    const createdAd = new this.adModel(adData);
-    const savedAd = await createdAd.save();
-
-    this.logger.log(`Ad created successfully: ${savedAd.adId}`);
-
-    return savedAd;
+  // Determine which category data to use
+  let categorySpecificData = {};
+  
+  switch(createAdDto.category) {
+    case 'Vehicle':
+      categorySpecificData = createAdDto.vehicleData || {};
+      break;
+    case 'Property':
+      categorySpecificData = createAdDto.propertyData || {};
+      break;
+    case 'Service':
+      categorySpecificData = createAdDto.serviceData || {};
+      break;
+    case 'Mobiles':
+      categorySpecificData = createAdDto.mobileData || {};
+      break;
+    case 'Electronics & Home appliances':
+      categorySpecificData = createAdDto.electronicsData || {};
+      break;
+    case 'Furniture':
+      categorySpecificData = createAdDto.furnitureData || {};
+      break;
+    case 'Education':
+      categorySpecificData = createAdDto.educationData || {};
+      break;
+    case 'Pets':
+      categorySpecificData = createAdDto.petsData || {};
+      break;
+    case 'Matrimonial':
+      categorySpecificData = createAdDto.matrimonialData || {};
+      break;
+    case 'Business':
+      categorySpecificData = createAdDto.businessData || {};
+      break;
+    case 'Travel':
+      categorySpecificData = createAdDto.travelData || {};
+      break;
+    case 'Astrology':
+      categorySpecificData = createAdDto.astrologyData || {};
+      break;
+    case 'Employment':
+      categorySpecificData = createAdDto.employmentData || {};
+      break;
+    case 'Lost & Found':
+      categorySpecificData = createAdDto.lostFoundData || {};
+      break;
+    case 'Personal':
+      categorySpecificData = createAdDto.personalData || {};
+      break;
+    default:
+      categorySpecificData = {};
   }
 
+  // Validate category-specific data
+  this.validateCategoryData(createAdDto.category, categorySpecificData);
+
+  // Calculate expiry date (default: 30 days from now)
+  const expiryDate = createAdDto.expiryDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+  // Check if coordinates are provided and valid
+  const hasValidCoordinates = 
+    createAdDto.latitude !== undefined && 
+    createAdDto.longitude !== undefined && 
+    !isNaN(Number(createAdDto.latitude)) && 
+    !isNaN(Number(createAdDto.longitude)) &&
+    Number(createAdDto.latitude) >= -90 && 
+    Number(createAdDto.latitude) <= 90 && 
+    Number(createAdDto.longitude) >= -180 && 
+    Number(createAdDto.longitude) <= 180;
+
+  // Prepare base ad data WITHOUT locationCoordinates
+  const adData: any = {
+    title: createAdDto.title,
+    description: createAdDto.description,
+    category: createAdDto.category,
+    subCategory: createAdDto.subCategory,
+    userId: createAdDto.userId,
+    userType: createAdDto.userType,
+    images: createAdDto.images,
+    videos: createAdDto.videos || [],
+    price: createAdDto.price,
+    negotiable: createAdDto.negotiable || false,
+    location: createAdDto.location,
+    city: createAdDto.city,
+    state: createAdDto.state,
+    pincode: createAdDto.pincode,
+    contactInfo: {
+      name: createAdDto.contactInfo.name,
+      phone: createAdDto.contactInfo.phone,
+      email: createAdDto.contactInfo.email,
+      whatsapp: createAdDto.contactInfo.whatsapp,
+      preferredContactMethod: createAdDto.contactInfo.preferredContactMethod || 'phone'
+    },
+    categorySpecificData,
+    tags: createAdDto.tags || [],
+    adId: uuidv4(),
+    status: 'active',
+    views: 0,
+    expiryDate,
+    isPromoted: createAdDto.isPromoted || false,
+    promotedUntil: createAdDto.promotedUntil,
+    promotionPackage: createAdDto.promotionPackage,
+    metadata: {
+      ip: createAdDto.metadata?.ip || '0.0.0.0',
+      userAgent: createAdDto.metadata?.userAgent || 'system',
+      platform: createAdDto.metadata?.platform || 'api',
+      deviceId: createAdDto.metadata?.deviceId
+    },
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+
+  // ONLY add locationCoordinates if we have valid coordinates
+  if (hasValidCoordinates) {
+    adData.locationCoordinates = {
+      type: 'Point',
+      coordinates: [
+        Number(createAdDto.longitude), 
+        Number(createAdDto.latitude)
+      ]
+    };
+    this.logger.debug(`Added location coordinates: ${JSON.stringify(adData.locationCoordinates)}`);
+  } else {
+    // Explicitly NOT adding locationCoordinates field
+    this.logger.debug('No valid coordinates provided - skipping locationCoordinates field');
+  }
+
+  // Log what we're saving (for debugging)
+  this.logger.debug(`Saving ad with fields: ${Object.keys(adData).join(', ')}`);
+  this.logger.debug(`Has locationCoordinates: ${hasValidCoordinates}`);
+
+  // Create ad in database
+  const createdAd = new this.adModel(adData);
+  const savedAd = await createdAd.save();
+
+  this.logger.log(`Ad created successfully: ${savedAd.adId}`);
+
+  return savedAd;
+}
+
+async adminDeleteAd(adId: string): Promise<void> {
+  // Admin can hard delete or soft delete
+  await this.adModel.findOneAndDelete({ adId }).exec();
+  // OR soft delete:
+  // await this.adModel.findOneAndUpdate({ adId }, { status: 'deleted' });
+}
+
+async adminGetAllAds(): Promise<Ad[]> {
+  return this.adModel.find().sort({ createdAt: -1 }).exec();
+}
+
+async verifyUser(userId: any): Promise<boolean> {
+  try {
+    this.logger.log(`🔍 VERIFYING USER: ${userId}`);
+    
+    // STEP 1: Convert to string safely
+    let userIdStr: string;
+    
+    if (!userId) {
+      this.logger.error('❌ UserId is null or undefined');
+      return false;
+    }
+    
+    if (typeof userId === 'string') {
+      userIdStr = userId;
+    } else if (userId.toString) {
+      userIdStr = userId.toString();
+    } else {
+      userIdStr = String(userId);
+    }
+    
+    this.logger.log(`🔍 UserId as string: ${userIdStr}`);
+    
+    // STEP 2: Validate format
+    if (!userIdStr.match(/^[0-9a-fA-F]{24}$/)) {
+      this.logger.warn(`❌ Invalid user ID format: ${userIdStr}`);
+      return false;
+    }
+    
+    // STEP 3: Find user
+    const user = await this.userModel.findById(userIdStr).lean().exec();
+    
+    if (user) {
+      this.logger.log(`✅ User FOUND: ${user.email}`);
+      return true;
+    } else {
+      this.logger.warn(`❌ User NOT FOUND with ID: ${userIdStr}`);
+      return false;
+    }
+  } catch (error) {
+    this.logger.error(`❌ Error verifying user: ${error.message}`);
+    return false;
+  }
+}
   async getAdById(adId: string): Promise<Ad> {
     const ad = await this.adModel.findOne({ adId }).exec();
     
@@ -314,13 +382,16 @@ export class AdsService {
     return { ads, total };
   }
 
-  async updateAd(adId: string, userId: string, updateData: UpdateAdDto): Promise<Ad> {
+  async updateAd(adId: string, userId: string, updateData: UpdateAdDto, isAdmin: boolean = false): Promise<Ad> {
     const ad = await this.getAdById(adId);
     
     // Check if user owns the ad
     if (ad.userId !== userId) {
       throw new ForbiddenException('You can only update your own ads');
     }
+      if (!isAdmin && ad.userId !== userId) {
+    throw new ForbiddenException('You can only update your own ads');
+  }
     
     // Prepare update object
     const updateObj: any = { ...updateData, updatedAt: new Date() };

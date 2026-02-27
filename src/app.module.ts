@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import configuration from './config/configuration';
 import { KafkaModule } from './kafka/kafka.module';
 import { AdsModule } from './ads/ads.module';
+import { UsersModule } from './Users/users.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AdsModule } from './ads/ads.module';
     // Feature Modules - order doesn't matter with forwardRef
     KafkaModule,
     AdsModule,
+    UsersModule,
   ],
 })
 export class AppModule {}
