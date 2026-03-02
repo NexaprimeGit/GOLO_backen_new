@@ -12,29 +12,54 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     this.initializeKafkaClient();
   }
 
-  private initializeKafkaClient() {
-    const kafkaConfig = this.configService.get('config.kafka');
+  // private initializeKafkaClient() {
+  //   const kafkaConfig = this.configService.get('config.kafka');
     
-    this.kafkaClient = new ClientKafka({
-      client: {
-        clientId: kafkaConfig.clientId,
-        brokers: kafkaConfig.brokers,
-        retry: {
-          initialRetryTime: 300,
-          retries: 8
-        }
-      },
-      consumer: {
-        groupId: kafkaConfig.groupId,
-        allowAutoTopicCreation: true,
-        maxBytesPerPartition: 1048576
-      },
-      producer: {
-        allowAutoTopicCreation: true,
-        transactionTimeout: 30000
-      }
-    });
+  //   this.kafkaClient = new ClientKafka({
+  //     client: {
+  //       clientId: kafkaConfig.clientId,
+  //       brokers: kafkaConfig.brokers,
+  //       retry: {
+  //         initialRetryTime: 300,
+  //         retries: 8
+  //       }
+  //     },
+  //     consumer: {
+  //       groupId: kafkaConfig.groupId,
+  //       allowAutoTopicCreation: true,
+  //       maxBytesPerPartition: 1048576
+  //     },
+  //     producer: {
+  //       allowAutoTopicCreation: true,
+  //       transactionTimeout: 30000
+  //     }
+  //   });
+  // }
+
+
+  // src/kafka/kafka.service.ts
+  private initializeKafkaClient() {
+  const kafkaConfig = this.configService.get('config.kafka');
+  
+  const options: any = {
+    client: {
+      clientId: kafkaConfig.clientId,
+      brokers: kafkaConfig.brokers,
+    },
+    consumer: {
+      groupId: kafkaConfig.groupId,
+    },
+    producer: {},
+  };
+
+  // Add SASL authentication if configured
+  if (kafkaConfig.sasl) {
+    options.client.sasl = kafkaConfig.sasl;
+    options.client.ssl = false;
   }
+
+  this.kafkaClient = new ClientKafka(options);
+}
 
   async onModuleInit() {
     // Subscribe to response topics

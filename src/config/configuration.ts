@@ -31,15 +31,19 @@ export default registerAs('config', () => ({
     uri: process.env.MONGODB_URI,
   },
   
-  kafka: {
-    // 🔴 Set default to false for Railway (since Kafka isn't available by default)
-    enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
-    brokers: process.env.KAFKA_BROKERS 
-      ? process.env.KAFKA_BROKERS.split(',') 
-      : [], // Empty array when disabled
-    clientId: process.env.KAFKA_CLIENT_ID || 'ads-service',
-    groupId: process.env.KAFKA_GROUP_ID || 'ads-consumer-group',
-  },
+// src/config/configuration.ts
+kafka: {
+  enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
+  brokers: process.env.KAFKA_BROKERS ? process.env.KAFKA_BROKERS.split(',') : [],
+  clientId: process.env.KAFKA_CLIENT_ID || 'golo-backend',
+  groupId: process.env.KAFKA_GROUP_ID || 'golo-consumer-group',
+  sasl: process.env.KAFKA_SASL_USERNAME ? {
+    mechanism: process.env.KAFKA_SASL_MECHANISM || 'plain',
+    username: process.env.KAFKA_SASL_USERNAME,
+    password: process.env.KAFKA_SASL_PASSWORD,
+  } : undefined,
+  ssl: false,
+},
   
   // 🔴 ADDED: JWT configuration (important for Railway)
   jwt: {

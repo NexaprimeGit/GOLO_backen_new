@@ -604,6 +604,20 @@ export class AdsController {
     }
   }
 
+  // src/ads/ads.controller.ts
+@Get('test-kafka')
+async testKafka() {
+  try {
+    const result = await this.kafkaService.emit('test-topic', {
+      message: 'Hello from GOLO Backend!',
+      timestamp: new Date().toISOString()
+    });
+    return { success: true, message: 'Kafka message sent', result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
   /**
    * Delete ad via Kafka (async) - Authenticated users only
    */
