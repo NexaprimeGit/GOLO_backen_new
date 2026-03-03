@@ -10,17 +10,29 @@ import { UserResponseDto } from './dto/user-response.dto';
 import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { ConfigService } from '@nestjs/config';
+import twilio from 'twilio';
 
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+
+  private twilioClient: any;
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
-  ) {}
+  ) {
+    // initialize twilio client if credentials provided
+    const sid = this.configService.get('TWILIO_SID');
+    const auth = this.configService.get('TWILIO_AUTH');
+    if (sid && auth) {
+      this.twilioClient = twilio(sid, auth);
+    } else {
+      this.logger.warn('Twilio credentials missing; SMS functionality disabled');
+    }
+  }
 
   // ==================== PUBLIC METHODS ====================
 
@@ -426,9 +438,22 @@ export class UsersService {
         { new: true }
       ).exec();
 
-      // TODO: In production, integrate with SMS service to send OTP to phone
-      this.logger.log(`OTP for ${user.email}: ${otp} (expires in 5 minutes)`);
-      console.log(`[DEBUG] OTP ${otp} sent to ${user.profile.phone}`);
+      // send via Twilio if available
+      if (this.twilioClient) {
+        try {
+          await this.twilioClient.messages.create({
+            body: `Your GOLO OTP is ${otp}`,
+            from: this.configService.get('TWILIO_PHONE'),
+            to: `+91${user.profile.phone}`,
+          });
+          this.logger.log(`SMS OTP sent via Twilio to ${user.profile.phone}`);
+        } catch (smsErr) {
+          this.logger.error(`Twilio SMS error: ${smsErr.message}`);
+        }
+      } else {
+        this.logger.log(`OTP for ${user.email}: ${otp} (expires in 5 minutes)`);
+        console.log(`[DEBUG] OTP ${otp} sent to ${user.profile.phone}`);
+      }
 
       return {
         message: 'OTP sent to registered phone number',
