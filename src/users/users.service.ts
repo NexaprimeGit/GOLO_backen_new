@@ -179,9 +179,11 @@ export class UsersService {
 
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
     this.logger.log(`Updating profile for user: ${userId}`);
+    this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
     
     // Check if email is being changed and if it's already taken
     if (updateData.email) {
+      this.logger.log(`Checking if email ${updateData.email} is already in use`);
       const existingUser = await this.userModel.findOne({ 
         email: updateData.email,
         _id: { $ne: userId }
@@ -204,6 +206,8 @@ export class UsersService {
     if (updateData.profile?.pincode) allowedUpdates['profile.pincode'] = updateData.profile.pincode;
     if (updateData.profile?.avatar) allowedUpdates['profile.avatar'] = updateData.profile.avatar;
     if (updateData.profile?.bio) allowedUpdates['profile.bio'] = updateData.profile.bio;
+
+    this.logger.debug(`Allowed updates: ${JSON.stringify(allowedUpdates)}`);
 
     const user = await this.userModel.findByIdAndUpdate(
       userId,
@@ -382,36 +386,46 @@ export class UsersService {
   async sendPasswordChangeOTP(userId: string): Promise<any> {
     this.logger.log(`Sending password change OTP for user: ${userId}`);
     
-    const user = await this.findById(userId);
-    if (!user.profile?.phone) {
-      throw new BadRequestException('Phone number not found in profile');
+    try {
+      // Get full user document with all fields
+      const user = await this.userModel.findById(userId).exec();
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      
+      if (!user.profile?.phone) {
+        throw new BadRequestException('Phone number not found in profile. Please update your phone number first.');
+      }
+
+      const otp = this.generateOTP();
+      const expiryTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      // Save OTP and reset verification status
+      await this.userModel.findByIdAndUpdate(
+        userId,
+        {
+          $set: {
+            passwordChangeOTP: otp,
+            passwordChangeOTPExpiry: expiryTime,
+            passwordChangeOTPVerified: false,
+            updatedAt: new Date(),
+          }
+        },
+        { new: true }
+      ).exec();
+
+      // TODO: In production, integrate with SMS service to send OTP to phone
+      this.logger.log(`OTP for ${user.email}: ${otp} (expires in 5 minutes)`);
+      console.log(`[DEBUG] OTP ${otp} sent to ${user.profile.phone}`);
+
+      return {
+        message: 'OTP sent to registered phone number',
+        expiresIn: 300, // 5 minutes in seconds
+      };
+    } catch (error) {
+      this.logger.error(`Error in sendPasswordChangeOTP: ${error.message}`);
+      throw error;
     }
-
-    const otp = this.generateOTP();
-    const expiryTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-
-    // Save OTP and reset verification status
-    await this.userModel.findByIdAndUpdate(
-      userId,
-      {
-        $set: {
-          passwordChangeOTP: otp,
-          passwordChangeOTPExpiry: expiryTime,
-          passwordChangeOTPVerified: false,
-          updatedAt: new Date(),
-        }
-      },
-      { new: true }
-    ).exec();
-
-    // TODO: In production, integrate with SMS service to send OTP to phone
-    this.logger.log(`OTP for ${user.email}: ${otp} (expires in 5 minutes)`);
-    console.log(`[DEBUG] OTP ${otp} sent to ${user.profile.phone}`);
-
-    return {
-      message: 'OTP sent to registered phone number',
-      expiresIn: 300, // 5 minutes in seconds
-    };
   }
 
   async verifyPasswordChangeOTP(userId: string, otp: string): Promise<any> {
