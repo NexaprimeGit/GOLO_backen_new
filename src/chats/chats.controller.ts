@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ChatsService } from './chats.service';
@@ -53,6 +53,18 @@ export class ChatsController {
     return {
       success: true,
       data,
+    };
+  }
+
+  @Delete('conversations/:conversationId')
+  async deleteConversation(
+    @CurrentUser() user: any,
+    @Param('conversationId') conversationId: string,
+  ) {
+    await this.chatsService.deleteConversation(user.id, conversationId);
+    return {
+      success: true,
+      message: 'Conversation deleted successfully',
     };
   }
 }

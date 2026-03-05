@@ -268,6 +268,17 @@ export class ChatsService {
     return conversation;
   }
 
+  async deleteConversation(userId: string, conversationId: string) {
+    const conversation = await this.getConversationForUser(userId, conversationId);
+
+    await Promise.all([
+      this.messageModel.deleteMany({ conversationId: this.toConversationId(conversation._id) }).exec(),
+      this.conversationModel.deleteOne({ _id: conversation._id }).exec(),
+    ]);
+
+    this.logger.log(`Conversation ${conversationId} deleted by user ${userId}`);
+  }
+
   private async enrichConversationForUser(
     conversation: ConversationDocument,
     currentUserId: string,
