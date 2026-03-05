@@ -21,9 +21,6 @@ export class Matrimonial {
   height?: string;
 
   @Prop()
-  weight?: string;
-
-  @Prop()
   maritalStatus?: string;
 
   @Prop()
@@ -31,9 +28,6 @@ export class Matrimonial {
 
   @Prop()
   caste?: string;
-
-  @Prop()
-  motherTongue?: string;
 
   @Prop()
   education?: string;
@@ -48,31 +42,7 @@ export class Matrimonial {
   city?: string;
 
   @Prop()
-  state?: string;
-
-  @Prop()
-  country?: string;
-
-  @Prop()
   about?: string;
-
-  @Prop({ type: [String] })
-  hobbies?: string[];
-
-  @Prop()
-  diet?: string;
-
-  @Prop()
-  drink?: string;
-
-  @Prop()
-  smoke?: string;
-
-  @Prop()
-  contactNumber?: string;
-
-  @Prop()
-  email?: string;
 }
 
 export const MatrimonialSchema = SchemaFactory.createForClass(Matrimonial);

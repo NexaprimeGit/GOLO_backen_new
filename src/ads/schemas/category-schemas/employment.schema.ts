@@ -15,9 +15,6 @@ export class Employment {
   companyName?: string;
 
   @Prop()
-  location?: string;
-
-  @Prop()
   experienceRequired?: string;
 
   @Prop()
@@ -27,28 +24,10 @@ export class Employment {
   qualifications?: string;
 
   @Prop()
-  skills?: string[];
-
-  @Prop()
   description?: string;
 
   @Prop()
   vacancies?: number;
-
-  @Prop()
-  lastDateToApply?: Date;
-
-  @Prop()
-  contactPerson?: string;
-
-  @Prop()
-  contactNumber?: string;
-
-  @Prop()
-  email?: string;
-
-  @Prop()
-  website?: string;
 }
 
 export const EmploymentSchema = SchemaFactory.createForClass(Employment);

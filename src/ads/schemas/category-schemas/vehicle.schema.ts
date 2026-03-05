@@ -48,34 +48,13 @@ export class Vehicle {
   price?: number;
 
   @Prop()
-  color?: string;
-
-  @Prop()
   insurance?: string;
-
-  @Prop()
-  registrationNumber?: string;
-
-  @Prop()
-  rcAvailable?: string;
 
   @Prop()
   ownerNumber?: number;
 
   @Prop()
-  ownership?: string;
-
-  @Prop({ type: [String] })
-  features?: string[];
-
-  @Prop()
   condition?: string;
-
-  @Prop()
-  emiAvailable?: boolean;
-
-  @Prop()
-  exchangeAvailable?: boolean;
 }
 
 export const VehicleSchema = SchemaFactory.createForClass(Vehicle);

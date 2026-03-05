@@ -20,20 +20,8 @@ export class Education {
   @Prop()
   fees?: number;
 
-  @Prop()
-  eligibility?: string;
-
-  @Prop()
-  admissionStartDate?: Date;
-
-  @Prop()
-  admissionEndDate?: Date;
-
   @Prop({ type: [String] })
   facilities?: string[];
-
-  @Prop()
-  website?: string;
 
   @Prop()
   contactPerson?: string;
@@ -45,28 +33,7 @@ export class Education {
   email?: string;
 
   @Prop()
-  affiliatedTo?: string;
-
-  @Prop()
-  accreditation?: string;
-
-  @Prop()
-  establishedYear?: number;
-
-  @Prop()
-  studentCapacity?: number;
-
-  @Prop()
-  mode?: string;
-
-  @Prop()
-  demo?: string;
-
-  @Prop()
-  experience?: string;
-
-  @Prop()
-  qualification?: string;
+  website?: string;
 }
 
 export const EducationSchema = SchemaFactory.createForClass(Education);

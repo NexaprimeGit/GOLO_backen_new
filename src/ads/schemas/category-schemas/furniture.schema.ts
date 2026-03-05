@@ -15,43 +15,16 @@ export class Furniture {
   material?: string;
 
   @Prop()
-  color?: string;
-
-  @Prop()
   dimensions?: string;
-
-  @Prop()
-  weight?: number;
 
   @Prop()
   condition?: string;
 
   @Prop()
-  assemblyRequired?: boolean;
-
-  @Prop()
-  style?: string;
-
-  @Prop()
-  brand?: string;
-
-  @Prop()
-  yearOfPurchase?: number;
-
-  @Prop()
   price?: number;
 
   @Prop()
-  originalPrice?: number;
-
-  @Prop()
   negotiable?: boolean;
-
-  @Prop()
-  deliveryAvailable?: boolean;
-
-  @Prop()
-  deliveryCharges?: number;
 }
 
 export const FurnitureSchema = SchemaFactory.createForClass(Furniture);
