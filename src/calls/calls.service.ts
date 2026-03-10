@@ -15,7 +15,7 @@ import { ListCallsDto } from './dto/list-calls.dto';
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
   private readonly activeCallTimeouts = new Map<string, NodeJS.Timeout>();
-  private readonly staleRingingMs = 45 * 1000;
+  private readonly staleRingingMs = 12 * 1000;
   private readonly staleAcceptedMs = 6 * 60 * 60 * 1000;
 
   constructor(
@@ -48,11 +48,30 @@ export class CallsService {
     }
 
     await this.cleanupStaleActiveCallsForUser(String(calleeId));
+    await this.cleanupStaleActiveCallsForUser(String(callerId));
 
-    const busyCall = await this.callModel.findOne({
+    let busyCall = await this.callModel.findOne({
       participants: String(calleeId),
       status: { $in: ['initiated', 'ringing', 'accepted'] },
-    });
+    })
+      .sort({ createdAt: -1 })
+      .exec();
+
+    if (busyCall) {
+      const isSamePair =
+        String(busyCall.callerId) === String(callerId) &&
+        String(busyCall.calleeId) === String(calleeId) &&
+        ['initiated', 'ringing'].includes(busyCall.status);
+
+      const callAgeMs = Date.now() - new Date(busyCall.startedAt || busyCall.createdAt).getTime();
+      const isStaleRinging = ['initiated', 'ringing'].includes(busyCall.status) && callAgeMs > this.staleRingingMs;
+
+      // Allow immediate redial for same pair by closing previous in-flight invite.
+      if (isSamePair || isStaleRinging) {
+        await this.endCallInternal(busyCall.callId, 'missed', 'timeout');
+        busyCall = null;
+      }
+    }
 
     if (busyCall) {
       return {

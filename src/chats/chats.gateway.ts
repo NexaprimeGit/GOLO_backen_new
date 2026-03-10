@@ -8,7 +8,7 @@ import {
 	WebSocketServer,
 	WsException,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -279,7 +279,21 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 		const userId = client.data.userId as string;
 		if (!userId || !payload?.conversationId) return { success: false };
 
-		const result = await this.chatsService.markConversationAsRead(userId, payload.conversationId);
+		let result: { messageIds: string[] };
+		try {
+			result = await this.chatsService.markConversationAsRead(userId, payload.conversationId);
+		} catch (error) {
+			if (error instanceof NotFoundException) {
+				this.logger.warn(
+					`mark_read ignored: conversation ${payload.conversationId} not found for user ${userId}`,
+				);
+				return {
+					success: true,
+					data: { messageIds: [] },
+				};
+			}
+			throw error;
+		}
 		if (result.messageIds.length > 0) {
 			const room = `conversation:${payload.conversationId}`;
 			this.server.to(room).emit('messages_read', {
