@@ -7,6 +7,7 @@ import { AdsModule } from './ads/ads.module';
 import { UsersModule } from './users/users.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ChatsModule } from './chats/chats.module';
+import { CallsModule } from './calls/calls.module';
 
 const logger = new Logger('MongoDB');
 
@@ -46,6 +47,7 @@ const logger = new Logger('MongoDB');
     UsersModule,
     PaymentsModule,
     ChatsModule,
+    CallsModule,
   ],
 })
 export class AppModule { }
