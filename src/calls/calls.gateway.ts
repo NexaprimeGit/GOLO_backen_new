@@ -30,6 +30,7 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private readonly logger = new Logger(CallsGateway.name);
+  private readonly unansweredTimeouts = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly jwtService: JwtService,
@@ -74,6 +75,44 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return call.participants.find((participantId: string) => String(participantId) !== String(userId));
   }
 
+  private scheduleUnansweredTimeout(callId: string) {
+    this.clearUnansweredTimeout(callId);
+
+    const timeout = setTimeout(async () => {
+      try {
+        const call = await this.callsService.markMissedIfUnanswered(callId);
+        if (!call || call.status !== 'missed') return;
+
+        const event = {
+          callId: call.callId,
+          by: call.callerId,
+          status: call.status,
+          endedAt: call.endedAt,
+          durationSec: call.durationSec || 0,
+          reason: call.endReason || 'timeout',
+        };
+
+        for (const participantId of call.participants || []) {
+          this.server.to(`user:${participantId}`).emit('call_ended', event);
+        }
+      } catch (error) {
+        this.logger.warn(`Unanswered timeout emit failed for ${callId}: ${error.message}`);
+      } finally {
+        this.unansweredTimeouts.delete(callId);
+      }
+    }, 30000);
+
+    this.unansweredTimeouts.set(callId, timeout);
+  }
+
+  private clearUnansweredTimeout(callId: string) {
+    const timeout = this.unansweredTimeouts.get(callId);
+    if (!timeout) return;
+
+    clearTimeout(timeout);
+    this.unansweredTimeouts.delete(callId);
+  }
+
   @SubscribeMessage('call_invite')
   async inviteCall(@ConnectedSocket() client: Socket, @MessageBody() payload: CallInviteDto) {
     try {
@@ -100,6 +139,8 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       const call = result.call;
+      this.scheduleUnansweredTimeout(call.callId);
+
       this.server.to(`user:${payload.calleeId}`).emit('incoming_call', {
         callId: call.callId,
         conversationId: call.conversationId,
@@ -135,6 +176,7 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!userId) throw new WsException('Unauthorized');
 
       const call = await this.callsService.acceptCall(payload.callId, userId);
+      this.clearUnansweredTimeout(call.callId);
       const otherUserId = this.otherParticipant(call, userId);
 
       this.server.to(`user:${userId}`).emit('call_accepted', {
@@ -164,6 +206,7 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!userId) throw new WsException('Unauthorized');
 
       const call = await this.callsService.rejectCall(payload.callId, userId);
+      this.clearUnansweredTimeout(call.callId);
       const otherUserId = this.otherParticipant(call, userId);
 
       const event = {
@@ -189,6 +232,7 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!userId) throw new WsException('Unauthorized');
 
       const call = await this.callsService.endCall(payload.callId, userId, payload.reason || 'hangup');
+      this.clearUnansweredTimeout(call.callId);
       const otherUserId = this.otherParticipant(call, userId);
 
       const event = {

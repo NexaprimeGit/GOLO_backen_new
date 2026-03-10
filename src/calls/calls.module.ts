@@ -7,12 +7,14 @@ import { CallsService } from './calls.service';
 import { CallsGateway } from './calls.gateway';
 import { Call, CallSchema } from './schemas/call.schema';
 import { Conversation, ConversationSchema } from '../chats/schemas/conversation.schema';
+import { Message, MessageSchema } from '../chats/schemas/message.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Call.name, schema: CallSchema },
       { name: Conversation.name, schema: ConversationSchema },
+      { name: Message.name, schema: MessageSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

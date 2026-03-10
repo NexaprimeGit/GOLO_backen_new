@@ -9,6 +9,7 @@ import { Model } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { Call, CallDocument, CallStatus, CallType } from './schemas/call.schema';
 import { Conversation, ConversationDocument } from '../chats/schemas/conversation.schema';
+import { Message, MessageDocument } from '../chats/schemas/message.schema';
 import { ListCallsDto } from './dto/list-calls.dto';
 
 @Injectable()
@@ -21,7 +22,50 @@ export class CallsService {
   constructor(
     @InjectModel(Call.name) private readonly callModel: Model<CallDocument>,
     @InjectModel(Conversation.name) private readonly conversationModel: Model<ConversationDocument>,
+    @InjectModel(Message.name) private readonly messageModel: Model<MessageDocument>,
   ) {}
+
+  private getCallSystemText(call: CallDocument) {
+    if (call.status === 'missed') return '📞 Missed call';
+    if (call.status === 'rejected') return '📞 Call declined';
+    if (call.status === 'failed') return '📞 Call failed';
+    if (call.status === 'busy') return '📞 User was busy';
+    if (call.status === 'ended') {
+      if ((call.durationSec || 0) > 0) {
+        const mins = String(Math.floor((call.durationSec || 0) / 60)).padStart(2, '0');
+        const secs = String((call.durationSec || 0) % 60).padStart(2, '0');
+        return `📞 Call ended (${mins}:${secs})`;
+      }
+      return '📞 Call ended';
+    }
+    return '📞 Call update';
+  }
+
+  private async persistCallEventMessage(call: CallDocument) {
+    const conversation = await this.conversationModel.findById(call.conversationId).exec();
+    if (!conversation) return;
+
+    const text = this.getCallSystemText(call);
+    const adId = conversation.adId || call.conversationId;
+    const adTitle = conversation.adTitle || null;
+
+    await this.messageModel.create({
+      conversationId: String(conversation._id),
+      adId,
+      adTitle,
+      senderId: String(call.callerId),
+      text,
+      attachments: [],
+      readBy: [String(call.callerId)],
+    });
+
+    conversation.lastMessageText = text;
+    conversation.lastMessageAt = new Date();
+    conversation.lastMessageAdId = adId;
+    conversation.lastMessageAdTitle = adTitle;
+    conversation.messagesCount = (conversation.messagesCount || 0) + 1;
+    await conversation.save();
+  }
 
   private async getConversationForParticipant(userId: string, conversationId: string) {
     const conversation = await this.conversationModel.findById(conversationId).exec();
@@ -179,6 +223,7 @@ export class CallsService {
     call.answeredAt = new Date();
     await call.save();
     this.clearMissedCallTimer(call.callId);
+    await this.persistCallEventMessage(call);
     return call;
   }
 
@@ -194,6 +239,15 @@ export class CallsService {
     }
 
     return this.endCallInternal(call.callId, 'rejected', 'declined');
+  }
+
+  async markMissedIfUnanswered(callId: string) {
+    const call = await this.getCallByCallId(callId);
+    if (!['ringing', 'initiated'].includes(call.status)) {
+      return call;
+    }
+
+    return this.endCallInternal(call.callId, 'missed', 'timeout');
   }
 
   private async endCallInternal(callId: string, status: CallStatus, reason?: string) {
