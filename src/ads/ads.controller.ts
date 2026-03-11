@@ -1013,15 +1013,20 @@ async testKafka() {
   @Get(':adId')
   async getAdById(@Param('adId') adId: string, @CurrentUser() user?: any) {
     this.logger.log(`REST: Getting ad by ID: ${adId}`);
+    this.logger.log(`REST: CurrentUser = ${user ? JSON.stringify(user) : 'undefined'}`);
 
     try {
       const ad = await this.adsService.getAdById(adId);
 
-      // Track view ONLY if user is authenticated
+      // Log auth state for debugging
       if (user?.id) {
+        this.logger.log(`✓ Authenticated user ${user.id} viewing ad ${adId} - tracking view`);
+        // Track view ONLY if user is authenticated
         this.adsService.trackViewWithVisitor(adId, user.id).catch(error => {
           this.logger.error(`Error tracking view: ${error.message}`);
         });
+      } else {
+        this.logger.warn(`⚠ Anonymous view of ad ${adId} - not tracked (auth-only tracking)`);
       }
 
       return {
