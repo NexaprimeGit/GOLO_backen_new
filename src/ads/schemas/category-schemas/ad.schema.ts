@@ -216,6 +216,9 @@ export class Ad {
   reviewedAt: Date;
 
   @Prop()
+  expiredAt: Date;  // When the ad was marked as expired (for 1-day grace period)
+
+  @Prop()
   createdAt: Date;
 
   @Prop()
@@ -234,5 +237,7 @@ AdSchema.index({ category: 1, status: 1, createdAt: -1 });
 AdSchema.index({ location: 1, category: 1 });
 AdSchema.index({ price: 1 });
 AdSchema.index({ city: 1, category: 1 });
-AdSchema.index({ expiryDate: 1 }, { expireAfterSeconds: 0 });
+// Ad expiry cleanup indexes (no TTL — we handle expiry + grace period in application code)
+AdSchema.index({ status: 1, expiryDate: 1 });
+AdSchema.index({ status: 1, expiredAt: 1 });
 AdSchema.index({ isPromoted: 1, promotedUntil: 1 });

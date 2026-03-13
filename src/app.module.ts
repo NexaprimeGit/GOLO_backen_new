@@ -8,6 +8,10 @@ import { UsersModule } from './users/users.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ChatsModule } from './chats/chats.module';
 import { CallsModule } from './calls/calls.module';
+import { RedisModule } from './common/services/redis.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 const logger = new Logger('MongoDB');
 
@@ -42,12 +46,16 @@ const logger = new Logger('MongoDB');
     }),
 
     // Feature Modules - order doesn't matter with forwardRef
+    RedisModule, // Global Redis caching
     KafkaModule,
     AdsModule,
     UsersModule,
     PaymentsModule,
     ChatsModule,
     CallsModule,
+    AuditLogsModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule { }

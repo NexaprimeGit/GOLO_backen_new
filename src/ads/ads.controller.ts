@@ -29,7 +29,7 @@ export class AdsController {
   // ==================== PUBLIC ROUTES (No Auth Required) ====================
 
   /**
-   * Get all ads with pagination
+   * Get all ads with pagination (CACHED)
    */
   @Get()
   async getAllAds(
@@ -39,12 +39,26 @@ export class AdsController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string
   ) {
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    
+    // Generate cache key
+    const cacheKey = this.adsService.getCacheKey(
+      'ads:homepage',
+      pageNum,
+      limitNum,
+      category || 'all'
+    );
+
+    // Try cache first
+    const cached = await this.adsService.redisService.get<any>(cacheKey);
+    if (cached) {
+      return { ...cached, fromCache: true };
+    }
+
     this.logger.log(`REST: Getting all ads - Page: ${page}, Limit: ${limit}`);
 
     try {
-      const pageNum = parseInt(page, 10);
-      const limitNum = parseInt(limit, 10);
-
       let result;
       if (category) {
         result = await this.adsService.getAdsByCategory(
@@ -55,10 +69,10 @@ export class AdsController {
           sortOrder || 'desc'
         );
       } else {
-        result = await this.adsService.searchAds('', {}, pageNum, limitNum);
+        result = await this.adsService.searchAds('', {}, pageNum, limitNum, sortBy || 'createdAt', sortOrder || 'desc');
       }
 
-      return {
+      const response = {
         success: true,
         data: result.ads,
         pagination: {
@@ -69,6 +83,10 @@ export class AdsController {
         },
         timestamp: new Date().toISOString()
       };
+
+      // Cache for 5 minutes
+      await this.adsService.redisService.set(cacheKey, response, 300);
+      return response;
     } catch (error) {
       this.logger.error(`REST: Error getting ads: ${error.message}`);
 
@@ -91,14 +109,20 @@ export class AdsController {
     @Query('location') location?: string,
     @Query('minPrice') minPrice?: string,
     @Query('maxPrice') maxPrice?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10'
   ) {
-    this.logger.log(`REST: Searching ads with query: ${query}`);
+    this.logger.log(`REST: Searching ads with query: ${query}, sortBy: ${sortBy}`);
 
     try {
       const pageNum = parseInt(page, 10);
       const limitNum = parseInt(limit, 10);
+      const latitude = lat ? parseFloat(lat) : undefined;
+      const longitude = lng ? parseFloat(lng) : undefined;
 
       const filters = {
         category,
@@ -107,7 +131,16 @@ export class AdsController {
         maxPrice: maxPrice ? parseInt(maxPrice, 10) : undefined
       };
 
-      const result = await this.adsService.searchAds(query, filters, pageNum, limitNum);
+      const result = await this.adsService.searchAds(
+        query,
+        filters,
+        pageNum,
+        limitNum,
+        sortBy || 'createdAt',
+        sortOrder || 'desc',
+        latitude,
+        longitude
+      );
 
       return {
         success: true,
@@ -186,7 +219,7 @@ export class AdsController {
   }
 
   /**
-   * Get ads by category
+   * Get ads by category (CACHED)
    */
   @Get('category/:category')
   async getAdsByCategory(
@@ -196,12 +229,26 @@ export class AdsController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string
   ) {
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    
+    // Generate cache key
+    const cacheKey = this.adsService.getCacheKey(
+      'ads:category',
+      category,
+      pageNum,
+      limitNum
+    );
+
+    // Try cache first
+    const cached = await this.adsService.redisService.get<any>(cacheKey);
+    if (cached) {
+      return { ...cached, fromCache: true };
+    }
+
     this.logger.log(`REST: Getting ads by category: ${category}`);
 
     try {
-      const pageNum = parseInt(page, 10);
-      const limitNum = parseInt(limit, 10);
-
       const result = await this.adsService.getAdsByCategory(
         category,
         pageNum,
@@ -210,7 +257,7 @@ export class AdsController {
         sortOrder || 'desc'
       );
 
-      return {
+      const response = {
         success: true,
         data: result.ads,
         pagination: {
@@ -221,6 +268,10 @@ export class AdsController {
         },
         timestamp: new Date().toISOString()
       };
+
+      // Cache for 10 minutes
+      await this.adsService.redisService.set(cacheKey, response, 600);
+      return response;
     } catch (error) {
       this.logger.error(`REST: Error getting ads by category: ${error.message}`);
 
@@ -357,6 +408,9 @@ export class AdsController {
 
       // Emit event to Kafka
       await this.adsService.emitAdCreated(ad, uuidv4());
+
+      // Invalidate ads cache
+      await this.adsService.invalidateAdsCache();
 
       return {
         success: true,
@@ -538,6 +592,9 @@ export class AdsController {
       // Emit update event
       await this.adsService.emitAdUpdated(updatedAd, uuidv4());
 
+      // Invalidate ads cache
+      await this.adsService.invalidateAdsCache();
+
       return {
         success: true,
         message: 'Ad updated successfully',
@@ -621,6 +678,9 @@ export class AdsController {
 
       // Emit delete event
       await this.adsService.emitAdDeleted(adId, user.id, uuidv4());
+
+      // Invalidate ads cache
+      await this.adsService.invalidateAdsCache();
 
       return {
         success: true,
@@ -763,11 +823,11 @@ async testKafka() {
   @Delete('admin/:adId')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminDeleteAd(@Param('adId') adId: string) {
+  async adminDeleteAd(@Param('adId') adId: string, @CurrentUser() admin: any) {
     this.logger.log(`REST: Admin deleting ad: ${adId}`);
 
     try {
-      await this.adsService.adminDeleteAd(adId);
+      await this.adsService.adminDeleteAd(adId, admin.id, admin.email);
 
       return {
         success: true,
@@ -780,6 +840,40 @@ async testKafka() {
       return {
         success: false,
         message: 'Failed to delete ad',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Admin: Update any ad
+   */
+  @Put('admin/:adId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminUpdateAd(
+    @Param('adId') adId: string,
+    @Body() updateData: UpdateAdDto,
+    @CurrentUser() admin: any
+  ) {
+    this.logger.log(`REST: Admin updating ad: ${adId}`);
+
+    try {
+      const updatedAd = await this.adsService.adminUpdateAd(adId, updateData, admin.id, admin.email);
+
+      return {
+        success: true,
+        message: 'Ad updated successfully by admin',
+        data: updatedAd,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error in admin update: ${error.message}`);
+
+      return {
+        success: false,
+        message: 'Failed to update ad',
         error: error.message,
         timestamp: new Date().toISOString()
       };
@@ -800,6 +894,37 @@ async testKafka() {
     } catch (error) {
       this.logger.error(`REST: Error resyncing views: ${error.message}`);
       return { success: false, message: 'Failed to resync view counts' };
+    }
+  }
+
+  /**
+   * Admin: Manually trigger expired ad cleanup
+   * - Deactivates active ads past expiryDate
+   * - Deletes expired ads past the 1-day grace period
+   */
+  @Post('admin/cleanup-expired')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async cleanupExpiredAds() {
+    this.logger.log('REST: Admin triggering expired ads cleanup');
+    try {
+      const deactivated = await this.adsService.deactivateExpiredAds();
+      const deleted = await this.adsService.deleteGracePeriodAds();
+
+      // Invalidate cache if anything changed
+      if (deactivated > 0 || deleted > 0) {
+        await this.adsService.invalidateAdsCache();
+      }
+
+      return {
+        success: true,
+        message: `Cleanup complete: ${deactivated} ads deactivated, ${deleted} ads permanently deleted`,
+        data: { deactivated, deleted },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error in expired cleanup: ${error.message}`);
+      return { success: false, message: 'Failed to cleanup expired ads', error: error.message };
     }
   }
 

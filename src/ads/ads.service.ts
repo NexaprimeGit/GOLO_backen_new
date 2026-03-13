@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Optional,
+  OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, SortOrder } from 'mongoose';
@@ -18,18 +20,28 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { Report, ReportDocument, ReportReason, ReportStatus } from './schemas/report.schema';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { RedisService } from '../common/services/redis.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
-export class AdsService {
+export class AdsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdsService.name);
   private emailTransporter: any;
   private emailEnabled: boolean;
+  private expirySchedulerInterval: NodeJS.Timeout | null = null;
+
+  // Run expiry check every hour (in milliseconds)
+  private readonly EXPIRY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+  // Grace period: keep expired ads in customer's "My Ads" for 1 day
+  private readonly GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
   constructor(
     @InjectModel(Ad.name) private readonly adModel: Model<AdDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Report.name) private readonly reportModel: Model<ReportDocument>,
+    private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
+    public redisService: RedisService, // Make public for controller access
 
     // ✅ Kafka OPTIONAL
     @Optional() private readonly kafkaService?: KafkaService,
@@ -59,6 +71,164 @@ export class AdsService {
     } else {
       this.logger.warn('⚠️ Email service not configured - emails will be logged only');
     }
+  }
+
+  /* ============================================================
+     LIFECYCLE HOOKS — Ad Expiry Scheduler
+  ============================================================ */
+
+  async onModuleInit() {
+    // Run once on startup, then schedule periodic checks
+    this.logger.log('🕐 Starting ad expiry scheduler (runs every hour)');
+    await this.runExpiryCleanup();
+    this.startExpiryScheduler();
+  }
+
+  onModuleDestroy() {
+    if (this.expirySchedulerInterval) {
+      clearInterval(this.expirySchedulerInterval);
+      this.expirySchedulerInterval = null;
+      this.logger.log('Ad expiry scheduler stopped');
+    }
+  }
+
+  /**
+   * Start the periodic scheduler that checks for expired ads every hour.
+   */
+  private startExpiryScheduler() {
+    this.expirySchedulerInterval = setInterval(async () => {
+      await this.runExpiryCleanup();
+    }, this.EXPIRY_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Main cleanup routine:
+   * 1. Deactivate active ads whose expiryDate has passed
+   * 2. Delete expired ads whose grace period (1 day after expiry) has ended
+   */
+  async runExpiryCleanup(): Promise<void> {
+    try {
+      const deactivated = await this.deactivateExpiredAds();
+      const deleted = await this.deleteGracePeriodAds();
+
+      if (deactivated > 0 || deleted > 0) {
+        this.logger.log(
+          `🔄 Expiry cleanup: ${deactivated} ads deactivated, ${deleted} ads permanently deleted`,
+        );
+        // Invalidate cache since ad listings changed
+        await this.invalidateAdsCache();
+      }
+    } catch (error: any) {
+      this.logger.error(`Expiry cleanup failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Step 1: Mark all active ads past their expiryDate as 'expired'.
+   * Sets `expiredAt` to the current time so the 1-day grace period starts.
+   */
+  async deactivateExpiredAds(): Promise<number> {
+    const now = new Date();
+
+    const result = await this.adModel.updateMany(
+      {
+        status: 'active',
+        expiryDate: { $lte: now },
+      },
+      {
+        $set: {
+          status: 'expired',
+          expiredAt: now,
+          updatedAt: now,
+        },
+      },
+    ).exec();
+
+    const count = result.modifiedCount ?? 0;
+    if (count > 0) {
+      this.logger.log(`⏰ Deactivated ${count} expired ads`);
+
+      // Emit Kafka event for each expired ad (batch notification)
+      if (this.kafkaService) {
+        await this.kafkaService.emit(KAFKA_TOPICS.AD_EXPIRED, {
+          count,
+          timestamp: now.toISOString(),
+        });
+      }
+    }
+
+    return count;
+  }
+
+  /**
+   * Step 2: Permanently delete expired ads whose grace period has ended.
+   * Grace period = 1 day after `expiredAt` — customer can still see them in "My Ads"
+   * during this window, after that they are permanently removed.
+   */
+  async deleteGracePeriodAds(): Promise<number> {
+    const gracePeriodCutoff = new Date(Date.now() - this.GRACE_PERIOD_MS);
+
+    // Find ads to delete (for logging and Kafka events)
+    const adsToDelete = await this.adModel
+      .find({
+        status: 'expired',
+        expiredAt: { $lte: gracePeriodCutoff },
+      })
+      .select('adId userId title')
+      .lean()
+      .exec();
+
+    if (adsToDelete.length === 0) return 0;
+
+    // Also delete associated reports
+    const adIdsToDelete = adsToDelete.map((ad) => ad.adId).filter(Boolean);
+    if (adIdsToDelete.length > 0) {
+      await this.reportModel.deleteMany({ adId: { $in: adIdsToDelete } }).exec();
+    }
+
+    // Permanently delete the ads
+    const result = await this.adModel.deleteMany({
+      status: 'expired',
+      expiredAt: { $lte: gracePeriodCutoff },
+    }).exec();
+
+    const count = result.deletedCount ?? 0;
+    if (count > 0) {
+      this.logger.log(`🗑️ Permanently deleted ${count} expired ads (grace period ended)`);
+
+      // Emit Kafka events
+      if (this.kafkaService) {
+        for (const ad of adsToDelete) {
+          await this.kafkaService.emit(KAFKA_TOPICS.AD_DELETED, {
+            adId: ad.adId,
+            userId: ad.userId,
+            reason: 'grace_period_ended',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    return count;
+  }
+
+  /* ============================================================
+     CACHE KEY HELPERS
+  ============================================================ */
+
+  public getCacheKey(prefix: string, ...parts: (string | number | undefined)[]): string {
+    const validParts = parts.filter(p => p !== undefined && p !== null);
+    return `golo:${prefix}:${validParts.join(':')}`;
+  }
+
+  public async invalidateAdsCache(): Promise<void> {
+    if (!this.redisService.isEnabled()) return;
+    
+    // Invalidate homepage and category caches when ads change
+    await this.redisService.deleteByPattern('golo:ads:homepage:*');
+    await this.redisService.deleteByPattern('golo:ads:category:*');
+    await this.redisService.deleteByPattern('golo:ads:trending:*');
+    this.logger.log('🔄 Ads cache invalidated');
   }
 
   /* ============================================================
@@ -170,8 +340,46 @@ export class AdsService {
      ADMIN
   ============================================================ */
 
-  async adminDeleteAd(adId: string): Promise<void> {
-    await this.adModel.findOneAndDelete({ adId }).exec();
+  async adminDeleteAd(adId: string, adminId?: string, adminEmail?: string): Promise<void> {
+    const ad: any = await this.adModel.findOneAndDelete({ adId }).exec();
+    
+    if (adminId && adminEmail && ad) {
+      await this.auditLogsService.log({
+        action: 'AD_DELETED_BY_ADMIN',
+        adminId,
+        adminEmail,
+        targetId: adId,
+        targetType: 'Ad',
+        details: { title: ad.title, category: ad.category }
+      });
+    }
+  }
+
+  async adminUpdateAd(adId: string, updateData: UpdateAdDto, adminId?: string, adminEmail?: string): Promise<Ad> {
+    const updatedAd = await this.adModel
+      .findOneAndUpdate(
+        { adId },
+        { $set: { ...updateData, updatedAt: new Date() } },
+        { new: true },
+      )
+      .exec();
+
+    if (!updatedAd) {
+      throw new NotFoundException(`Ad ${adId} not found`);
+    }
+
+    if (adminId && adminEmail) {
+      await this.auditLogsService.log({
+        action: 'AD_UPDATED_BY_ADMIN',
+        adminId,
+        adminEmail,
+        targetId: adId,
+        targetType: 'Ad',
+        details: { updateData }
+      });
+    }
+
+    return updatedAd;
   }
 
   async adminGetAllAds(): Promise<Ad[]> {
@@ -254,6 +462,10 @@ export class AdsService {
     filters: any = {},
     page = 1,
     limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+    lat?: number,
+    lng?: number,
   ): Promise<{ ads: Ad[]; total: number }> {
     const skip = (page - 1) * limit;
 
@@ -269,10 +481,21 @@ export class AdsService {
       mongoQuery.$text = { $search: query };
     }
 
+    let sort: any = {};
+    if (sortBy === 'distance' && lat !== undefined && lng !== undefined) {
+      mongoQuery.locationCoordinates = {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [lng, lat] },
+        },
+      };
+    } else {
+      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    }
+
     const [ads, total] = await Promise.all([
       this.adModel
         .find(mongoQuery)
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .exec(),
@@ -319,7 +542,11 @@ export class AdsService {
 
   async getAdsByUser(userId: string, page = 1, limit = 10): Promise<{ ads: Ad[]; total: number }> {
     const skip = (page - 1) * limit;
-    const query = { userId, status: 'active' };
+
+    // Show both 'active' AND 'expired' ads — expired ads remain visible to the
+    // ad owner for 1 day (grace period) so they know their ad has ended.
+    // After the grace period, deleteGracePeriodAds() removes them permanently.
+    const query = { userId, status: { $in: ['active', 'expired'] } };
 
     const [ads, total] = await Promise.all([
       this.adModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),

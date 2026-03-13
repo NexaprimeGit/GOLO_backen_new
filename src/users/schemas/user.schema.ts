@@ -71,6 +71,12 @@ export class User {
   @Prop({ type: [String], default: [] })
   wishlist: string[];
 
+  @Prop({ default: false })
+  isBanned: boolean;
+
+  @Prop()
+  banReason?: string;
+
   @Prop()
   createdAt: Date;
 

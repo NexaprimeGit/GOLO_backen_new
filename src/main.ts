@@ -55,6 +55,8 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
+  
+
   const port = configService.get('config.service.port');
   await app.listen(port);
 

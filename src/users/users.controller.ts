@@ -257,6 +257,30 @@ async debugCheckUser(@Param('id') id: string) {
     };
   }
 
+  @Post('admin/users/:id/ban')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminBanUser(@Param('id') id: string, @Body('reason') reason: string, @CurrentUser() admin: any) {
+    const user = await this.usersService.banUser(id, reason, admin.id, admin.email);
+    return {
+      success: true,
+      message: 'User banned successfully',
+      data: user,
+    };
+  }
+
+  @Post('admin/users/:id/unban')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminUnbanUser(@Param('id') id: string, @CurrentUser() admin: any) {
+    const user = await this.usersService.unbanUser(id, admin.id, admin.email);
+    return {
+      success: true,
+      message: 'User unbanned successfully',
+      data: user,
+    };
+  }
+
   @Get('admin/stats')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)

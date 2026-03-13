@@ -13,6 +13,7 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { AdsService } from '../ads/ads.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class UsersService {
@@ -24,6 +25,7 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
+    private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
@@ -65,12 +67,16 @@ export class UsersService {
     // Hash password
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-    // Create user (always USER role by default)
+    // Check for admin email in config
+    const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
+    const isSystemAdmin = adminEmail && registerDto.email.toLowerCase() === adminEmail.toLowerCase();
+
+    // Create user (Admin if matches config, else USER)
     const user = new this.userModel({
       name: registerDto.name,
       email: registerDto.email,
       password: hashedPassword,
-      role: UserRole.USER,
+      role: isSystemAdmin ? UserRole.ADMIN : UserRole.USER,
       profile: {
         phone: registerDto.phone,
       },
@@ -110,6 +116,19 @@ export class UsersService {
     if (!isPasswordValid) {
       this.logger.warn(`Login failed - invalid password: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.isBanned) {
+      this.logger.warn(`Login failed - user is banned: ${loginDto.email}`);
+      throw new ForbiddenException(`Your account has been banned. Reason: ${user.banReason || 'No reason provided'}`);
+    }
+
+    // Auto-promote to admin if email matches config
+    const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
+    if (adminEmail && user.email.toLowerCase() === adminEmail.toLowerCase() && user.role !== UserRole.ADMIN) {
+      this.logger.log(`Auto-promoting ${user.email} to ADMIN based on config`);
+      user.role = UserRole.ADMIN;
+      await user.save();
     }
 
     // Generate tokens
@@ -468,6 +487,55 @@ export class UsersService {
     } else {
       this.logger.warn('Kafka disabled - USER_DELETED event skipped');
     }
+  }
+
+  async banUser(userId: string, reason: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
+    this.logger.log(`Admin banning user: ${userId}`);
+    
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { isBanned: true, banReason: reason, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.auditLogsService.log({
+      action: 'USER_BANNED',
+      adminId,
+      adminEmail,
+      targetId: userId,
+      targetType: 'User',
+      details: { reason }
+    });
+
+    return this.toResponseDto(user);
+  }
+
+  async unbanUser(userId: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
+    this.logger.log(`Admin unbanning user: ${userId}`);
+    
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { isBanned: false, banReason: null, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.auditLogsService.log({
+      action: 'USER_UNBANNED',
+      adminId,
+      adminEmail,
+      targetId: userId,
+      targetType: 'User'
+    });
+
+    return this.toResponseDto(user);
   }
 
   async adminGetStats(): Promise<any> {
