@@ -1288,6 +1288,7 @@ async testKafka() {
         updateDto.status,
         updateDto.adminNotes,
         user.id,
+        user.email,
       );
 
       return {
@@ -1323,6 +1324,7 @@ async testKafka() {
         body.decision,
         body.adminNotes,
         user.id,
+        user.email,
       );
 
       return {

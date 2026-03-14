@@ -454,7 +454,7 @@ export class UsersService {
     return this.findById(userId);
   }
 
-  async adminUpdateUser(userId: string, updateData: any): Promise<UserResponseDto> {
+  async adminUpdateUser(userId: string, updateData: any, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin updating user: ${userId}`);
     
     // Admin can update any field
@@ -468,16 +468,33 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    await this.auditLogsService.log({
+      action: 'USER_UPDATED',
+      adminId,
+      adminEmail,
+      targetId: userId,
+      targetType: 'User',
+      details: { updatedFields: updateData }
+    });
+
     return this.toResponseDto(user);
   }
 
-  async adminDeleteUser(userId: string): Promise<void> {
+  async adminDeleteUser(userId: string, adminId: string, adminEmail: string): Promise<void> {
     this.logger.log(`Admin deleting user: ${userId}`);
     
     const result = await this.userModel.deleteOne({ _id: userId }).exec();
     if (result.deletedCount === 0) {
       throw new NotFoundException('User not found');
     }
+
+    await this.auditLogsService.log({
+      action: 'USER_DELETED',
+      adminId,
+      adminEmail,
+      targetId: userId,
+      targetType: 'User'
+    });
 
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_DELETED, {
@@ -814,6 +831,8 @@ export class UsersService {
       name: user.name,
       email: user.email,
       role: user.role,
+      isBanned: user.isBanned || false,
+      banReason: user.banReason,
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
       createdAt: user.createdAt,

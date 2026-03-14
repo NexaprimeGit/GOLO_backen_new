@@ -237,8 +237,8 @@ async debugCheckUser(@Param('id') id: string) {
   @Put('admin/users/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminUpdateUser(@Param('id') id: string, @Body() updateData: any) {
-    const user = await this.usersService.adminUpdateUser(id, updateData);
+  async adminUpdateUser(@Param('id') id: string, @Body() updateData: any, @CurrentUser() admin: any) {
+    const user = await this.usersService.adminUpdateUser(id, updateData, admin.id, admin.email);
     return {
       success: true,
       message: 'User updated successfully by admin',
@@ -249,8 +249,8 @@ async debugCheckUser(@Param('id') id: string) {
   @Delete('admin/users/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminDeleteUser(@Param('id') id: string) {
-    await this.usersService.adminDeleteUser(id);
+  async adminDeleteUser(@Param('id') id: string, @CurrentUser() admin: any) {
+    await this.usersService.adminDeleteUser(id, admin.id, admin.email);
     return {
       success: true,
       message: 'User deleted successfully by admin',

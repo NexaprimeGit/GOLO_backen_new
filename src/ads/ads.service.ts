@@ -484,12 +484,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     }
 
     let sort: any = {};
+    const countQuery = { ...mongoQuery };
+
     if (sortBy === 'distance' && lat !== undefined && lng !== undefined) {
       mongoQuery.locationCoordinates = {
         $near: {
           $geometry: { type: 'Point', coordinates: [lng, lat] },
         },
       };
+      // $near fails in countDocuments, so just count docs that have coordinates matching other filters
+      countQuery.locationCoordinates = { $exists: true, $ne: null };
     } else {
       sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
     }
@@ -501,7 +505,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.adModel.countDocuments(mongoQuery),
+      this.adModel.countDocuments(countQuery),
     ]);
 
     return { ads, total };
@@ -520,12 +524,21 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const geoQuery: any = { status: 'active' };
     if (category) geoQuery.category = category;
 
+    const countQuery = { ...geoQuery };
+
     // Try geo query if coordinates are stored
     if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
       geoQuery.locationCoordinates = {
         $near: {
           $geometry: { type: 'Point', coordinates: [lng, lat] },
           $maxDistance: maxDistance,
+        },
+      } as any;
+      
+      // $near fails in countDocuments, use $geoWithin $centerSphere instead
+      countQuery.locationCoordinates = {
+        $geoWithin: {
+          $centerSphere: [[lng, lat], maxDistance / 6378100],
         },
       } as any;
     }
@@ -536,7 +549,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.adModel.countDocuments(geoQuery),
+      this.adModel.countDocuments(countQuery),
     ]);
 
     return { ads, total };
@@ -1242,6 +1255,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     status: ReportStatus,
     adminNotes?: string,
     reviewerId?: string,
+    reviewerEmail?: string,
   ): Promise<{ success: boolean; message: string }> {
     try {
       this.logger.log(`Updating report ${reportId} status to: ${status}`);
@@ -1263,6 +1277,17 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException('Report not found');
       }
 
+      if (reviewerId && reviewerEmail) {
+        await this.auditLogsService.log({
+          action: 'REPORT_STATUS_UPDATED',
+          adminId: reviewerId,
+          adminEmail: reviewerEmail,
+          targetId: reportId,
+          targetType: 'Report',
+          details: { newStatus: status, adminNotes }
+        });
+      }
+
       return {
         success: true,
         message: 'Report status updated successfully',
@@ -1281,6 +1306,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     decision: 'approve' | 'remove' | 'request_changes',
     adminNotes?: string,
     reviewerId?: string,
+    reviewerEmail?: string,
   ): Promise<{ success: boolean; message: string }> {
     try {
       this.logger.log(`Admin reviewing ad ${adId}, decision: ${decision}`);
@@ -1317,6 +1343,17 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           },
         },
       ).exec();
+
+      if (reviewerId && reviewerEmail) {
+        await this.auditLogsService.log({
+          action: 'AD_REVIEW_DECISION',
+          adminId: reviewerId,
+          adminEmail: reviewerEmail,
+          targetId: adId,
+          targetType: 'Ad',
+          details: { decision, adminNotes }
+        });
+      }
 
       return {
         success: true,

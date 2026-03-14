@@ -3,6 +3,8 @@ export class UserResponseDto {
   name: string;
   email: string;
   role: string;
+  isBanned?: boolean;
+  banReason?: string;
   isEmailVerified: boolean;
   profile?: any;
   createdAt: Date;
