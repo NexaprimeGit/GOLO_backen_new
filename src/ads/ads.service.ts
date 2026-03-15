@@ -314,9 +314,22 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
     this.validateCategoryData(createAdDto.category, categorySpecificData);
 
-    const expiryDate =
-      createAdDto.expiryDate ||
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // If the user selected specific scheduling dates, expire the ad at the end
+    // of the last chosen day. Otherwise, fall back to an explicit expiryDate or
+    // the default 30-day window.
+    const expiryDate = (() => {
+      if (createAdDto.selectedDates && createAdDto.selectedDates.length > 0) {
+        const lastDate = new Date(
+          Math.max(...createAdDto.selectedDates.map((d) => new Date(d).getTime())),
+        );
+        lastDate.setHours(23, 59, 59, 999);
+        return lastDate;
+      }
+      return (
+        createAdDto.expiryDate ||
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      );
+    })();
 
     const adData: any = {
       ...createAdDto,
@@ -474,7 +487,19 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const mongoQuery: any = { status: 'active' };
 
     if (filters?.category) mongoQuery.category = filters.category;
-    if (filters?.location) mongoQuery.location = filters.location;
+    if (filters?.location && String(filters.location).trim()) {
+      const normalizedLocation = String(filters.location).trim();
+      const escapedLocation = normalizedLocation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const locationRegex = new RegExp(escapedLocation, 'i');
+
+      mongoQuery.$or = [
+        { location: locationRegex },
+        { city: locationRegex },
+        { state: locationRegex },
+        { pincode: locationRegex },
+        { cities: { $elemMatch: { $regex: locationRegex } } },
+      ];
+    }
     if (typeof filters?.minPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $gte: filters.minPrice };
     if (typeof filters?.maxPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $lte: filters.maxPrice };
 
