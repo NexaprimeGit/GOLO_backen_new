@@ -848,6 +848,63 @@ export class UsersService {
     ).exec();
   }
 
+  async saveIWantPreference(
+    userId: string,
+    payload: { category: string; title?: string; description?: string },
+  ): Promise<any> {
+    const category = String(payload?.category || '').trim();
+    const title = String(payload?.title || '').trim();
+    const description = String(payload?.description || '').trim();
+
+    if (!category) {
+      throw new BadRequestException('Category is required');
+    }
+
+    if (!title && !description) {
+      throw new BadRequestException('Title or description is required');
+    }
+
+    const existingUser = await this.userModel.findById(userId).exec();
+    if (!existingUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const currentCreatedAt = existingUser.iWantPreference?.createdAt || new Date();
+
+    const user = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        {
+          $set: {
+            iWantPreference: {
+              category,
+              title,
+              description,
+              createdAt: currentCreatedAt,
+              updatedAt: new Date(),
+            },
+            updatedAt: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return user.iWantPreference;
+  }
+
+  async getIWantPreference(userId: string): Promise<any | null> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user.iWantPreference || null;
+  }
+
   async getWishlistIds(userId: string): Promise<string[]> {
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
@@ -889,6 +946,7 @@ export class UsersService {
       banReason: user.banReason,
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
+      iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,
     };
   }

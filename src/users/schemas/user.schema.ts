@@ -71,6 +71,24 @@ export class User {
   @Prop({ type: [String], default: [] })
   wishlist: string[];
 
+  @Prop({
+    type: {
+      category: String,
+      title: String,
+      description: String,
+      createdAt: Date,
+      updatedAt: Date,
+    },
+    default: null,
+  })
+  iWantPreference?: {
+    category?: string;
+    title?: string;
+    description?: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+  };
+
   @Prop({ default: false })
   isBanned: boolean;
 

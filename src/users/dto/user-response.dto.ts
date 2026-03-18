@@ -7,6 +7,13 @@ export class UserResponseDto {
   banReason?: string;
   isEmailVerified: boolean;
   profile?: any;
+  iWantPreference?: {
+    category?: string;
+    title?: string;
+    description?: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+  } | null;
   createdAt: Date;
   
   constructor(partial: Partial<UserResponseDto>) {

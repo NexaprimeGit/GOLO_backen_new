@@ -181,6 +181,22 @@ export class UsersController {
     return { success: true };
   }
 
+  // ==================== I WANT PREFERENCE ROUTES ====================
+
+  @Get('preferences/i-want')
+  @UseGuards(JwtAuthGuard)
+  async getIWantPreference(@CurrentUser() user: any) {
+    const data = await this.usersService.getIWantPreference(user.id);
+    return { success: true, data };
+  }
+
+  @Put('preferences/i-want')
+  @UseGuards(JwtAuthGuard)
+  async saveIWantPreference(@CurrentUser() user: any, @Body() body: any) {
+    const data = await this.usersService.saveIWantPreference(user.id, body);
+    return { success: true, message: 'I Want preference saved', data };
+  }
+
   @Get('all')
   @UseGuards(JwtAuthGuard)
   async getAllUsers(
