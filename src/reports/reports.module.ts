@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ReportsGateway } from './reports.gateway';
+import { ReportsKafkaController } from './reports.kafka.controller';
+import { KafkaModule } from '../kafka/kafka.module';
 
 @Module({
   imports: [
@@ -12,7 +14,9 @@ import { ReportsGateway } from './reports.gateway';
       }),
       inject: [ConfigService],
     }),
+    KafkaModule,
   ],
+  controllers: [ReportsKafkaController],
   providers: [ReportsGateway],
   exports: [ReportsGateway],
 })

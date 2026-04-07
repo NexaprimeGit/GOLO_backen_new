@@ -133,6 +133,10 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
    */
   @SubscribeMessage('get_status')
   handleGetStatus(@ConnectedSocket() client: Socket) {
+    return this.getGatewayStatus();
+  }
+
+  public getGatewayStatus() {
     return {
       status: 'ok',
       adminsConnected: this.adminSockets.size,

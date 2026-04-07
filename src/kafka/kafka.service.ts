@@ -12,16 +12,9 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(KafkaService.name);
   private kafkaClient: ClientKafka | null = null;
-  private readonly kafkaEnabled: boolean;
 
   constructor(private configService: ConfigService) {
-    this.kafkaEnabled = process.env.ENABLE_KAFKA === 'true';
-
-    if (this.kafkaEnabled) {
-      this.initializeKafkaClient();
-    } else {
-      this.logger.log('Kafka is disabled via ENABLE_KAFKA=false');
-    }
+    this.initializeKafkaClient();
   }
 
   // ==================== INITIALIZATION WITH RAILWAY SUPPORT ====================
@@ -30,7 +23,7 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     
     // Check if Kafka is enabled
     if (!kafkaConfig?.enabled) {
-      this.logger.log('Kafka is disabled, skipping client initialization');
+      this.logger.log('Kafka is disabled via ENABLE_KAFKA=false');
       this.kafkaClient = null;
       return;
     }
@@ -95,11 +88,33 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     try {
       // Subscribe to response topics
       const topics = [
-        KAFKA_TOPICS.AD_RESPONSE,
-        KAFKA_TOPICS.AD_ERROR,
-        KAFKA_TOPICS.AD_CREATED,
-        KAFKA_TOPICS.AD_UPDATED,
-        KAFKA_TOPICS.AD_DELETED
+        KAFKA_TOPICS.AD_CREATE,
+        KAFKA_TOPICS.AD_UPDATE,
+        KAFKA_TOPICS.AD_DELETE,
+        KAFKA_TOPICS.AD_GET,
+        KAFKA_TOPICS.AD_GET_BY_CATEGORY,
+        KAFKA_TOPICS.AD_GET_BY_USER,
+        KAFKA_TOPICS.AD_SEARCH,
+        KAFKA_TOPICS.AD_GET_NEARBY,
+        KAFKA_TOPICS.CHAT_START_CONVERSATION,
+        KAFKA_TOPICS.CHAT_LIST_CONVERSATIONS,
+        KAFKA_TOPICS.CHAT_LIST_MESSAGES,
+        KAFKA_TOPICS.CHAT_SEND_MESSAGE,
+        KAFKA_TOPICS.CHAT_DELETE_CONVERSATION,
+        KAFKA_TOPICS.CALL_GET_HISTORY,
+        KAFKA_TOPICS.CALL_GET_BY_ID,
+        KAFKA_TOPICS.CALL_CREATE_INVITE,
+        KAFKA_TOPICS.CALL_ACCEPT,
+        KAFKA_TOPICS.CALL_REJECT,
+        KAFKA_TOPICS.CALL_END,
+        KAFKA_TOPICS.ANALYTICS_DEVICE_BREAKDOWN,
+        KAFKA_TOPICS.ANALYTICS_TOP_REGIONS,
+        KAFKA_TOPICS.ANALYTICS_TOP_PAGES,
+        KAFKA_TOPICS.ANALYTICS_EVENTS,
+        KAFKA_TOPICS.ANALYTICS_RECENT_ACTIVITY,
+        KAFKA_TOPICS.AUDIT_LOG_CREATE,
+        KAFKA_TOPICS.AUDIT_LOG_LIST,
+        KAFKA_TOPICS.REPORTS_STATUS,
       ];
 
       topics.forEach(topic => {

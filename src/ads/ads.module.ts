@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AdsService } from './ads.service';
 import { AdsController } from './ads.controller';
+import { AdsKafkaController } from './ads.kafka.controller';
 import { Ad, AdSchema } from './schemas/category-schemas/ad.schema';
 import { User, UserSchema } from '../users/schemas/user.schema'; // IMPORT User schema
 import { Report, ReportSchema } from './schemas/report.schema';
@@ -22,7 +23,7 @@ import { KafkaModule } from '../kafka/kafka.module';
     EventEmitterModule.forRoot(),
     forwardRef(() => KafkaModule),
   ],
-  controllers: [AdsController],
+  controllers: [AdsController, AdsKafkaController],
   providers: [AdsService],
   exports: [AdsService],
 })

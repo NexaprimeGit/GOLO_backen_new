@@ -29,7 +29,63 @@ const topics = [
   'ad.error',
   
   // Dead Letter Queue
-  'ad.dlq'
+  'ad.dlq',
+
+  // User event topics
+  'user.registered',
+  'user.logged.in',
+  'user.logged.out',
+  'user.updated',
+  'user.deleted',
+  'user.ads.fetched',
+  'user.ads.created',
+
+  // Payment event topics
+  'payment.created',
+  'payment.succeeded',
+  'payment.failed',
+  'payment.refunded',
+  'payment.webhook.processed',
+
+  // Report and moderation topics
+  'ad.report.submitted',
+  'ad.auto.disabled',
+  'ad.review.request',
+  'reports.status',
+
+  // Chat command/event topics
+  'chat.start.conversation',
+  'chat.list.conversations',
+  'chat.list.messages',
+  'chat.send.message',
+  'chat.delete.conversation',
+  'chat.conversation.started',
+  'chat.message.sent',
+  'chat.conversation.deleted',
+
+  // Call command/event topics
+  'call.get.history',
+  'call.get.by.id',
+  'call.create.invite',
+  'call.accept',
+  'call.reject',
+  'call.end',
+  'call.invited',
+  'call.accepted',
+  'call.rejected',
+  'call.ended',
+
+  // Analytics command topics
+  'analytics.device.breakdown',
+  'analytics.top.regions',
+  'analytics.top.pages',
+  'analytics.events',
+  'analytics.recent.activity',
+
+  // Audit logs command/event topics
+  'audit.log.create',
+  'audit.log.list',
+  'audit.log.created'
 ];
 
 async function createTopics() {
