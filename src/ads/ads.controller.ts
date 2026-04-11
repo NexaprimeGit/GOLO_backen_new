@@ -1,7 +1,7 @@
 // ...existing code...
 import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
-  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request
+  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request, ForbiddenException
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -870,6 +870,166 @@ async testKafka() {
         timestamp: new Date().toISOString()
       };
     }
+  }
+
+  /**
+   * Merchant: Submit banner promotion request for admin review
+   */
+  @Post('banner-promotions/request')
+  @UseGuards(JwtAuthGuard)
+  async submitBannerPromotionRequest(
+    @Body()
+    body: {
+      bannerTitle: string;
+      bannerCategory: string;
+      imageUrl: string;
+      selectedDates: string[];
+      totalPrice: number;
+      dailyRate?: number;
+      platformFee?: number;
+      recommendedSize?: string;
+    },
+    @CurrentUser() user: any,
+  ) {
+    this.logger.log(`REST: Merchant ${user.id} submitting banner promotion request`);
+
+    try {
+      const request = await this.adsService.createBannerPromotionRequest(user.id, body);
+      return {
+        success: true,
+        message: 'Banner promotion request submitted for review',
+        data: request,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error submitting banner request: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to submit banner promotion request',
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Merchant: List own banner promotion requests with statuses
+   */
+  @Get('banner-promotions/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyBannerPromotions(@CurrentUser() user: any) {
+    const rows = await this.adsService.listMerchantBannerPromotions(user.id);
+    return {
+      success: true,
+      data: rows,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Merchant: mark approved request as paid (mock payment confirmation)
+   */
+  @Post('banner-promotions/:requestId/pay')
+  @UseGuards(JwtAuthGuard)
+  async payForApprovedBannerPromotion(
+    @Param('requestId') requestId: string,
+    @Body('paymentReference') paymentReference: string,
+    @CurrentUser() user: any,
+  ) {
+    const updated = await this.adsService.markBannerPromotionAsPaid(requestId, user.id, paymentReference);
+    return {
+      success: true,
+      message: 'Payment recorded and banner activated',
+      data: updated,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Public: Get currently active homepage banners (max 5)
+   */
+  @Get('banner-promotions/active')
+  async getActiveHomepageBanners(@Query('limit') limit?: string) {
+    const safeLimit = Math.max(1, Math.min(5, Number(limit) || 5));
+    const rows = await this.adsService.getActiveHomepageBanners(safeLimit);
+    return {
+      success: true,
+      data: rows,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Admin: list banner promotion requests by moderation status
+   */
+  @Get('admin/banner-promotions')
+  @UseGuards(JwtAuthGuard)
+  async adminListBannerPromotions(
+    @Query('status') status: string,
+    @CurrentUser() user: any,
+  ) {
+    if (!['admin', 'manager'].includes(String(user?.role || '').toLowerCase())) {
+      throw new ForbiddenException('Only admin/manager can view banner moderation queue');
+    }
+
+    const rows = await this.adsService.listBannerPromotionsForAdmin(status);
+    return {
+      success: true,
+      data: rows,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Admin: approve/reject banner promotion request
+   */
+  @Post('admin/banner-promotions/:requestId/review')
+  @UseGuards(JwtAuthGuard)
+  async adminReviewBannerPromotion(
+    @Param('requestId') requestId: string,
+    @Body() body: { decision: 'approve' | 'reject'; adminNotes?: string },
+    @CurrentUser() user: any,
+  ) {
+    if (!['admin', 'manager'].includes(String(user?.role || '').toLowerCase())) {
+      throw new ForbiddenException('Only admin/manager can review banner promotions');
+    }
+
+    const result = await this.adsService.reviewBannerPromotionRequest(
+      requestId,
+      body.decision,
+      user.id,
+      body.adminNotes,
+    );
+
+    return {
+      success: true,
+      message: `Banner request ${body.decision === 'approve' ? 'approved' : 'rejected'} successfully`,
+      data: result,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Admin: Delete banner promotion request
+   */
+  @Delete('admin/banner-promotions/:requestId')
+  @UseGuards(JwtAuthGuard)
+  async adminDeleteBannerPromotion(
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: any,
+  ) {
+    if (!['admin', 'manager'].includes(String(user?.role || '').toLowerCase())) {
+      throw new ForbiddenException('Only admin/manager can delete banner promotions');
+    }
+
+    const result = await this.adsService.deleteBannerPromotion(requestId, user.id);
+
+    return {
+      success: true,
+      message: 'Banner promotion deleted successfully',
+      data: result,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   // ==================== ADMIN ROUTES (Admin only) ====================

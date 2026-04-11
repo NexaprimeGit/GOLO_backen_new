@@ -3,6 +3,7 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { json, urlencoded } from 'express';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -11,6 +12,10 @@ async function bootstrap() {
     rawBody: true,
   });
   const configService = app.get(ConfigService);
+
+  // Allow larger payloads for banner image submissions (base64 data URLs).
+  app.use(json({ limit: '15mb' }));
+  app.use(urlencoded({ extended: true, limit: '15mb' }));
 
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,

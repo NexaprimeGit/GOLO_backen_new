@@ -13,6 +13,12 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, SortOrder } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Ad, AdDocument } from './schemas/category-schemas/ad.schema';
+import {
+  BannerPaymentStatus,
+  BannerPromotion,
+  BannerPromotionDocument,
+  BannerPromotionStatus,
+} from './schemas/banner-promotion.schema';
 import { CreateAdDto } from './dto/create-ad.dto';
 import { UpdateAdDto } from './dto/update-ad.dto';
 import { KafkaService } from '../kafka/kafka.service';
@@ -251,6 +257,8 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(Ad.name) private readonly adModel: Model<AdDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Report.name) private readonly reportModel: Model<ReportDocument>,
+    @InjectModel(BannerPromotion.name)
+    private readonly bannerPromotionModel: Model<BannerPromotionDocument>,
     private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     public redisService: RedisService, // Make public for controller access
@@ -1947,6 +1955,231 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       totalRows: totalRowsAgg?.[0]?.total || 0,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  /* ============================================================
+     BANNER PROMOTIONS
+  ============================================================ */
+
+  async createBannerPromotionRequest(
+    merchantId: string,
+    payload: {
+      bannerTitle: string;
+      bannerCategory: string;
+      imageUrl: string;
+      selectedDates: string[];
+      totalPrice: number;
+      dailyRate?: number;
+      platformFee?: number;
+      recommendedSize?: string;
+    },
+  ): Promise<BannerPromotion> {
+    const merchant = await this.userModel.findById(merchantId).select('name email role accountType').lean().exec();
+    if (!merchant) {
+      throw new NotFoundException('Merchant not found');
+    }
+
+    if (merchant.role !== 'merchant' && merchant.accountType !== 'merchant') {
+      throw new ForbiddenException('Only merchants can submit banner promotion requests');
+    }
+
+    const normalizedDates = Array.from(
+      new Set((payload.selectedDates || []).map((dateStr) => new Date(dateStr).toISOString().split('T')[0])),
+    )
+      .map((dateStr) => new Date(dateStr))
+      .filter((date) => !Number.isNaN(date.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (!normalizedDates.length) {
+      throw new BadRequestException('Please select at least one valid visibility date');
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (normalizedDates[0] < today) {
+      throw new BadRequestException('Selected dates cannot be in the past');
+    }
+
+    const selectedDays = normalizedDates.length;
+    const dailyRate = Number(payload.dailyRate ?? 240);
+    const platformFee = Number(payload.platformFee ?? (selectedDays > 0 ? 49 : 0));
+    const computedTotal = dailyRate * selectedDays + platformFee;
+
+    const request = await this.bannerPromotionModel.create({
+      requestId: uuidv4(),
+      merchantId,
+      merchantName: merchant.name || 'Merchant',
+      merchantEmail: merchant.email || '-',
+      bannerTitle: payload.bannerTitle?.trim(),
+      bannerCategory: payload.bannerCategory?.trim(),
+      imageUrl: payload.imageUrl,
+      recommendedSize: payload.recommendedSize || '1920 x 520 px',
+      selectedDates: normalizedDates,
+      startDate: normalizedDates[0],
+      endDate: normalizedDates[normalizedDates.length - 1],
+      selectedDays,
+      dailyRate,
+      platformFee,
+      totalPrice: Number(payload.totalPrice || computedTotal),
+      status: BannerPromotionStatus.UNDER_REVIEW,
+      paymentStatus: BannerPaymentStatus.PENDING,
+      isHomepageVisible: false,
+    });
+
+    return request;
+  }
+
+  async listMerchantBannerPromotions(merchantId: string): Promise<BannerPromotion[]> {
+    await this.expireBannerPromotions();
+    return this.bannerPromotionModel
+      .find({ merchantId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+  }
+
+  async listBannerPromotionsForAdmin(status?: string): Promise<BannerPromotion[]> {
+    await this.expireBannerPromotions();
+
+    const filter: Record<string, any> = {};
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    return this.bannerPromotionModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+  }
+
+  async reviewBannerPromotionRequest(
+    requestId: string,
+    decision: 'approve' | 'reject',
+    adminId: string,
+    adminNotes?: string,
+  ): Promise<BannerPromotion> {
+    const request = await this.bannerPromotionModel.findOne({ requestId }).exec();
+    if (!request) {
+      throw new NotFoundException('Banner promotion request not found');
+    }
+
+    if (request.status !== BannerPromotionStatus.UNDER_REVIEW) {
+      throw new BadRequestException('Only under review requests can be moderated');
+    }
+
+    request.reviewedBy = adminId;
+    request.reviewedAt = new Date();
+    request.adminNotes = adminNotes || '';
+
+    if (decision === 'approve') {
+      request.status = BannerPromotionStatus.APPROVED;
+      request.isHomepageVisible = true;
+    } else {
+      request.status = BannerPromotionStatus.REJECTED;
+      request.isHomepageVisible = false;
+    }
+
+    await request.save();
+    return request;
+  }
+
+  async markBannerPromotionAsPaid(
+    requestId: string,
+    merchantId: string,
+    paymentReference?: string,
+  ): Promise<BannerPromotion> {
+    const request = await this.bannerPromotionModel.findOne({ requestId, merchantId }).exec();
+    if (!request) {
+      throw new NotFoundException('Banner promotion request not found');
+    }
+
+    if (request.status !== BannerPromotionStatus.APPROVED) {
+      throw new BadRequestException('Only approved requests can be paid and activated');
+    }
+
+    request.paymentStatus = BannerPaymentStatus.PAID;
+    request.paidAt = new Date();
+    request.paymentReference = paymentReference || '';
+    request.status = BannerPromotionStatus.ACTIVE;
+    request.isHomepageVisible = true;
+
+    await request.save();
+    await this.enforceActiveBannerLimit(5);
+
+    return request;
+  }
+
+  async getActiveHomepageBanners(limit = 5): Promise<BannerPromotion[]> {
+    await this.expireBannerPromotions();
+
+    const now = new Date();
+
+    return this.bannerPromotionModel
+      .find({
+        status: { $in: [BannerPromotionStatus.APPROVED, BannerPromotionStatus.ACTIVE] },
+        isHomepageVisible: true,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      })
+      .sort({ 
+        // Show ACTIVE (paid) banners first, then APPROVED (unpaid) banners
+        status: 1, 
+        paidAt: -1, 
+        createdAt: -1 
+      })
+      .limit(limit)
+      .lean()
+      .exec();
+  }
+
+  private async expireBannerPromotions(): Promise<void> {
+    const now = new Date();
+
+    await this.bannerPromotionModel
+      .updateMany(
+        {
+          status: BannerPromotionStatus.ACTIVE,
+          endDate: { $lt: now },
+        },
+        {
+          $set: {
+            status: BannerPromotionStatus.EXPIRED,
+            isHomepageVisible: false,
+          },
+        },
+      )
+      .exec();
+  }
+
+  async deleteBannerPromotion(requestId: string, adminId: string): Promise<BannerPromotion> {
+    const bannerPromotion = await this.bannerPromotionModel.findOne({ requestId }).exec();
+    if (!bannerPromotion) {
+      throw new NotFoundException(`Banner promotion with ID ${requestId} not found`);
+    }
+
+    await this.bannerPromotionModel.deleteOne({ requestId }).exec();
+    return bannerPromotion;
+  }
+
+  private async enforceActiveBannerLimit(maxActive: number): Promise<void> {
+    const activeRequests = await this.bannerPromotionModel
+      .find({
+        status: BannerPromotionStatus.ACTIVE,
+        paymentStatus: BannerPaymentStatus.PAID,
+        isHomepageVisible: true,
+      })
+      .sort({ paidAt: 1, createdAt: 1 })
+      .exec();
+
+    if (activeRequests.length <= maxActive) {
+      return;
+    }
+
+    const toDelete = activeRequests.slice(0, activeRequests.length - maxActive);
+    const idsToDelete = toDelete.map((item) => item.requestId);
+
+    await this.bannerPromotionModel.deleteMany({ requestId: { $in: idsToDelete } }).exec();
   }
 
   /* ============================================================
