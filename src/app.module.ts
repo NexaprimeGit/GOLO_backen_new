@@ -12,6 +12,7 @@ import { CallsModule } from './calls/calls.module';
 import { ReportsModule } from './reports/reports.module';
 import { RedisModule } from './common/services/redis.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { MerchantProductsModule } from './merchant-products/merchant-products.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -58,6 +59,7 @@ const logger = new Logger('MongoDB');
     ReportsModule,
     AuditLogsModule,
     AnalyticsModule,
+    MerchantProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

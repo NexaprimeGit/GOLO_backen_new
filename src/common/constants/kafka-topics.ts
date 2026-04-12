@@ -16,6 +16,10 @@ export const KAFKA_TOPICS = {
   AD_VIEWED: 'ad.viewed',
   AD_EXPIRED: 'ad.expired',
   AD_PROMOTED: 'ad.promoted',
+
+  // Merchant Product Events
+  MERCHANT_PRODUCT_CREATED: 'merchant.product.created',
+  MERCHANT_PRODUCT_DELETED: 'merchant.product.deleted',
   
   // Responses
   AD_RESPONSE: 'ad.response',
