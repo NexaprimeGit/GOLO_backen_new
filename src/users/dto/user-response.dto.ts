@@ -3,7 +3,7 @@ export class UserResponseDto {
   name: string;
   email: string;
   role: string;
-  accountType?: 'user' | 'merchant';
+  accountType: 'user' | 'merchant';
   isBanned?: boolean;
   banReason?: string;
   isEmailVerified: boolean;
