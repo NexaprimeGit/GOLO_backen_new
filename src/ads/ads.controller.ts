@@ -1253,6 +1253,20 @@ async testKafka() {
     }
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('reports/merchant/my')
+  async getMerchantReports(
+    @CurrentUser() user: any,
+    @Query('status') status?: 'pending' | 'reviewed' | 'action_taken',
+  ) {
+    const rows = await this.adsService.getMerchantReports(user.id, status as any);
+    return {
+      success: true,
+      data: rows,
+      count: rows.length,
+    };
+  }
+
   /**
    * Get a single report by reportId (admin only, enriched)
    */
@@ -1376,6 +1390,26 @@ async testKafka() {
         error: error.message,
       };
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('reports/:reportId/merchant-status')
+  async updateMerchantReportStatus(
+    @Param('reportId') reportId: string,
+    @Body() updateDto: UpdateReportStatusDto,
+    @CurrentUser() user: any,
+  ) {
+    const result = await this.adsService.updateMerchantReportStatus(
+      reportId,
+      updateDto.status,
+      user.id,
+      updateDto.adminNotes,
+    );
+
+    return {
+      success: true,
+      message: result.message,
+    };
   }
 
   /**

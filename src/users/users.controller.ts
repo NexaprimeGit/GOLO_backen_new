@@ -188,6 +188,23 @@ export class UsersController {
     return { success: true, data: await this.usersService.getNotifications(user.id) };
   }
 
+  @Post('notifications/:notificationId/read')
+  @UseGuards(JwtAuthGuard)
+  async markNotificationRead(
+    @CurrentUser() user: any,
+    @Param('notificationId') notificationId: string,
+  ) {
+    await this.usersService.markNotificationRead(notificationId, user.id);
+    return { success: true };
+  }
+
+  @Post('notifications/read-all')
+  @UseGuards(JwtAuthGuard)
+  async markAllNotificationsRead(@CurrentUser() user: any) {
+    await this.usersService.markAllNotificationsRead(user.id);
+    return { success: true };
+  }
+
   // ==================== ADMIN ====================
   @Get('admin/users')
   @UseGuards(JwtAuthGuard, RolesGuard)

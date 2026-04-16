@@ -171,11 +171,11 @@ export class VouchersService implements OnModuleInit {
    * Generate verification code on-demand when user reaches redeem page
    * This speeds up the claim process and generates the code only when needed
    */
-  async generateVerificationCodeForVoucher(voucherId: string, userId: string) {
+  async generateVerificationCodeForVoucher(voucherId: string, merchantId: string) {
     try {
       const voucher = await this.voucherModel.findOne({
         voucherId,
-        userId: new Types.ObjectId(userId),
+        merchantId: new Types.ObjectId(merchantId),
       });
 
       if (!voucher) {

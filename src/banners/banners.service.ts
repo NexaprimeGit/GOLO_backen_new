@@ -21,6 +21,7 @@ import {
   BannerPromotionStatus,
 } from './schemas/banner-promotion.schema';
 import { SubmitBannerPromotionDto } from './dto/submit-banner-promotion.dto';
+import { UpdateBannerPromotionDto } from './dto/update-banner-promotion.dto';
 
 @Injectable()
 export class BannersService implements OnModuleInit {
@@ -267,6 +268,75 @@ export class BannersService implements OnModuleInit {
     return request;
   }
 
+  async updateMerchantBannerPromotion(
+    requestId: string,
+    merchantId: string,
+    payload: UpdateBannerPromotionDto,
+  ): Promise<BannerPromotion> {
+    const request = await this.bannerPromotionModel
+      .findOne({ requestId, merchantId })
+      .exec();
+    if (!request) {
+      throw new NotFoundException('Banner promotion request not found');
+    }
+
+    if (payload.bannerTitle !== undefined) {
+      request.bannerTitle = payload.bannerTitle.trim();
+    }
+    if (payload.bannerCategory !== undefined) {
+      request.bannerCategory = payload.bannerCategory.trim();
+    }
+    if (payload.imageUrl !== undefined) {
+      request.imageUrl = payload.imageUrl;
+    }
+    if (payload.recommendedSize !== undefined) {
+      request.recommendedSize = payload.recommendedSize;
+    }
+
+    if (Array.isArray(payload.selectedDates) && payload.selectedDates.length) {
+      const normalizedDates = Array.from(
+        new Set(
+          payload.selectedDates.map(
+            (dateStr) => new Date(dateStr).toISOString().split('T')[0],
+          ),
+        ),
+      )
+        .map((dateStr) => new Date(dateStr))
+        .filter((date) => !Number.isNaN(date.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
+
+      if (!normalizedDates.length) {
+        throw new BadRequestException('Please provide valid selectedDates');
+      }
+
+      request.selectedDates = normalizedDates;
+      request.startDate = normalizedDates[0];
+      request.endDate = normalizedDates[normalizedDates.length - 1];
+      request.selectedDays = normalizedDates.length;
+      request.totalPrice =
+        request.dailyRate * request.selectedDays + request.platformFee;
+    }
+
+    if (payload.action === 'pause') {
+      request.isHomepageVisible = false;
+      if (request.status === BannerPromotionStatus.ACTIVE) {
+        request.status = BannerPromotionStatus.APPROVED;
+      }
+    }
+
+    if (payload.action === 'resume') {
+      if (request.paymentStatus !== BannerPaymentStatus.PAID) {
+        throw new BadRequestException('Only paid banner requests can be resumed');
+      }
+      request.isHomepageVisible = true;
+      request.status = BannerPromotionStatus.ACTIVE;
+    }
+
+    await request.save();
+    await this.invalidateBannerCache(merchantId);
+    return request;
+  }
+
   async getActiveHomepageBanners(limit = 5): Promise<BannerPromotion[]> {
     const cacheKey = this.activeBannersCacheKey(limit);
     const cached = await this.redisService.get<BannerPromotion[]>(cacheKey);
@@ -321,6 +391,22 @@ export class BannersService implements OnModuleInit {
 
     await this.invalidateBannerCache(bannerPromotion.merchantId);
 
+    return bannerPromotion;
+  }
+
+  async deleteMerchantBannerPromotion(
+    requestId: string,
+    merchantId: string,
+  ): Promise<BannerPromotion> {
+    const bannerPromotion = await this.bannerPromotionModel
+      .findOne({ requestId, merchantId })
+      .exec();
+    if (!bannerPromotion) {
+      throw new NotFoundException('Banner promotion request not found');
+    }
+
+    await this.bannerPromotionModel.deleteOne({ requestId, merchantId }).exec();
+    await this.invalidateBannerCache(merchantId);
     return bannerPromotion;
   }
 

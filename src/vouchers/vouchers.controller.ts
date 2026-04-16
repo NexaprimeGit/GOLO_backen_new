@@ -190,14 +190,14 @@ export class VouchersController {
     @Param('voucherId') voucherId: string,
     @CurrentUser() user: any,
   ) {
-    const userId = user?.id || user?._id;
-    if (!userId) {
-      throw new BadRequestException('User ID not found');
+    const merchantId = user?.id || user?._id;
+    if (!merchantId) {
+      throw new BadRequestException('Merchant ID not found');
     }
 
     return await this.vouchersService.generateVerificationCodeForVoucher(
       voucherId,
-      userId,
+      merchantId,
     );
   }
 

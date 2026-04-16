@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Put,
   Delete,
   Get,
   Param,
@@ -15,6 +16,7 @@ import { BannersService } from './banners.service';
 import { SubmitBannerPromotionDto } from './dto/submit-banner-promotion.dto';
 import { ReviewBannerPromotionDto } from './dto/review-banner-promotion.dto';
 import { PayBannerPromotionDto } from './dto/pay-banner-promotion.dto';
+import { UpdateBannerPromotionDto } from './dto/update-banner-promotion.dto';
 
 @Controller('banners')
 export class BannersController {
@@ -66,6 +68,44 @@ export class BannersController {
       success: true,
       message: 'Payment recorded and banner activated',
       data: updated,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Put('promotions/:requestId')
+  @UseGuards(JwtAuthGuard)
+  async updateMyBannerPromotion(
+    @Param('requestId') requestId: string,
+    @Body() body: UpdateBannerPromotionDto,
+    @CurrentUser() user: any,
+  ) {
+    const updated = await this.bannersService.updateMerchantBannerPromotion(
+      requestId,
+      user.id,
+      body,
+    );
+    return {
+      success: true,
+      message: 'Banner promotion updated successfully',
+      data: updated,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Delete('promotions/:requestId')
+  @UseGuards(JwtAuthGuard)
+  async deleteMyBannerPromotion(
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: any,
+  ) {
+    const result = await this.bannersService.deleteMerchantBannerPromotion(
+      requestId,
+      user.id,
+    );
+    return {
+      success: true,
+      message: 'Banner promotion deleted successfully',
+      data: result,
       timestamp: new Date().toISOString(),
     };
   }

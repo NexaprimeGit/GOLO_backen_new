@@ -15,6 +15,9 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { MerchantProductsModule } from './merchant-products/merchant-products.module';
 import { BannersModule } from './banners/banners.module';
 import { VouchersModule } from './vouchers/vouchers.module';
+import { OrdersModule } from './orders/orders.module';
+import { ReviewsModule } from './reviews/reviews.module';
+import { MerchantDashboardModule } from './merchant-dashboard/merchant-dashboard.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -64,6 +67,9 @@ const logger = new Logger('MongoDB');
     MerchantProductsModule,
     BannersModule,
     VouchersModule,
+    OrdersModule,
+    ReviewsModule,
+    MerchantDashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

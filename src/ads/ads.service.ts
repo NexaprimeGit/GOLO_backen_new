@@ -1619,6 +1619,84 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getMerchantReports(
+    merchantId: string,
+    status?: ReportStatus,
+  ): Promise<any[]> {
+    const ads = await this.adModel
+      .find({ userId: String(merchantId) })
+      .select('adId title status reportCount')
+      .lean()
+      .exec();
+
+    const adIds = ads.map((ad: any) => ad.adId).filter(Boolean);
+    if (!adIds.length) {
+      return [];
+    }
+
+    const filter: any = { adId: { $in: adIds } };
+    if (status) {
+      filter.status = status;
+    }
+
+    const reports = await this.reportModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const adMap = new Map<string, any>();
+    ads.forEach((ad: any) => {
+      adMap.set(ad.adId, ad);
+    });
+
+    return reports.map((report: any) => {
+      const ad = adMap.get(report.adId);
+      return {
+        ...report,
+        adTitle: ad?.title || 'Unknown listing',
+        adStatus: ad?.status || 'unknown',
+        adReportCount: ad?.reportCount || 0,
+      };
+    });
+  }
+
+  async updateMerchantReportStatus(
+    reportId: string,
+    status: ReportStatus,
+    merchantId: string,
+    adminNotes?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const report = await this.reportModel.findOne({ reportId }).lean().exec();
+    if (!report) {
+      throw new NotFoundException('Report not found');
+    }
+
+    const ad = await this.adModel.findOne({ adId: report.adId }).lean().exec();
+    if (!ad || String(ad.userId) !== String(merchantId)) {
+      throw new ForbiddenException('You can only update reports for your own ads');
+    }
+
+    await this.reportModel
+      .findOneAndUpdate(
+        { reportId },
+        {
+          $set: {
+            status,
+            adminNotes: adminNotes || '',
+            reviewedAt: new Date(),
+            reviewedBy: merchantId,
+          },
+        },
+      )
+      .exec();
+
+    return {
+      success: true,
+      message: 'Report status updated successfully',
+    };
+  }
+
   /**
    * Admin review of flagged ad
    */

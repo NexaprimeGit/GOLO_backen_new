@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UserRole } from '../users/schemas/user.schema';
 import { CreateMerchantProductDto } from './dto/create-merchant-product.dto';
 import { ListMerchantProductsDto } from './dto/list-merchant-products.dto';
+import { UpdateMerchantProductDto } from './dto/update-merchant-product.dto';
 import { MerchantProductsService } from './merchant-products.service';
 
 interface CurrentUserPayload {
@@ -51,6 +53,15 @@ export class MerchantProductsController {
     @Param('productId') productId: string,
   ) {
     return this.merchantProductsService.getProduct(user.id, productId);
+  }
+
+  @Put(':productId')
+  async updateOne(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('productId') productId: string,
+    @Body() dto: UpdateMerchantProductDto,
+  ) {
+    return this.merchantProductsService.updateProduct(user.id, productId, dto);
   }
 
   @Delete(':productId')

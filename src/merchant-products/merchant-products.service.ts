@@ -13,6 +13,7 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { RedisService } from '../common/services/redis.service';
 import { CreateMerchantProductDto } from './dto/create-merchant-product.dto';
 import { ListMerchantProductsDto } from './dto/list-merchant-products.dto';
+import { UpdateMerchantProductDto } from './dto/update-merchant-product.dto';
 import {
   MerchantProduct,
   MerchantProductDocument,
@@ -184,6 +185,43 @@ export class MerchantProductsService implements OnModuleInit {
 
     await this.redisService.set(cacheKey, response, 300);
     return response;
+  }
+
+  async updateProduct(merchantId: string, productId: string, dto: UpdateMerchantProductDto) {
+    const product = await this.merchantProductModel.findById(productId).exec();
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (String(product.merchantId) !== String(merchantId)) {
+      throw new ForbiddenException('You can only update your own products');
+    }
+
+    if (typeof dto.name === 'string') {
+      product.name = dto.name.trim();
+    }
+    if (typeof dto.category === 'string') {
+      product.category = dto.category.trim();
+    }
+    if (typeof dto.description === 'string') {
+      product.description = dto.description.trim();
+    }
+    if (typeof dto.price === 'number') {
+      product.price = dto.price;
+    }
+    if (typeof dto.stockQuantity === 'number') {
+      product.stockQuantity = dto.stockQuantity;
+      product.status = this.deriveStatus(dto.stockQuantity);
+    }
+
+    await product.save();
+    await this.invalidateMerchantProductCache(merchantId);
+
+    return {
+      success: true,
+      message: 'Product updated successfully',
+      data: this.mapProduct(product),
+    };
   }
 
   async deleteProduct(merchantId: string, productId: string) {
