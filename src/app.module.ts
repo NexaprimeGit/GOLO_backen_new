@@ -13,6 +13,7 @@ import { ReportsModule } from './reports/reports.module';
 import { RedisModule } from './common/services/redis.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { MerchantProductsModule } from './merchant-products/merchant-products.module';
+import { MerchantDashboardModule } from './merchant-dashboard/merchant-dashboard.module';
 import { BannersModule } from './banners/banners.module';
 import { MerchantsModule } from './merchants/merchants.module';
 import { VouchersModule } from './vouchers/vouchers.module';
@@ -64,6 +65,7 @@ const logger = new Logger('MongoDB');
     AuditLogsModule,
     AnalyticsModule,
     MerchantProductsModule,
+    MerchantDashboardModule,
     BannersModule,
     VouchersModule,
   ],

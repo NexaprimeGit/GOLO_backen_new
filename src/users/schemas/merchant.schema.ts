@@ -35,6 +35,12 @@ export class Merchant {
   @Prop({ type: Number })
   storeLocationLongitude?: number;
 
+  @Prop()
+  profilePhoto?: string;
+
+  @Prop()
+  shopPhoto?: string;
+
   @Prop({ default: 'active' })
   status: 'active' | 'inactive';
 

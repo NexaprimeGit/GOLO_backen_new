@@ -10,6 +10,7 @@ import { MerchantsService } from './merchants.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateStoreLocationDto } from '../users/dto/update-store-location.dto';
+import { UpdateMerchantProfileDto } from './dto/update-merchant-profile.dto';
 
 @Controller('merchant')
 @UseGuards(JwtAuthGuard)
@@ -69,5 +70,22 @@ export class MerchantsController {
       longitude,
       radius || 10,
     );
+  }
+
+  /**
+   * Update merchant profile information
+   * PUT /merchant/profile
+   */
+  @Put('profile')
+  async updateMerchantProfile(
+    @CurrentUser() user: any,
+    @Body() updateData: UpdateMerchantProfileDto,
+  ) {
+    if (!user?.id && !user?._id) {
+      throw new BadRequestException('User authentication required');
+    }
+
+    const userId = user.id || user._id;
+    return await this.merchantsService.updateMerchantProfile(userId, updateData);
   }
 }

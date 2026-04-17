@@ -183,4 +183,58 @@ export class MerchantsService {
       );
     }
   }
+
+  /**
+   * Update merchant profile information
+   * @param userId - Merchant's user ID
+   * @param updateData - Merchant profile data to update
+   * @returns Updated merchant data
+   */
+  async updateMerchantProfile(userId: string, updateData: any) {
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+
+    try {
+      const allowedUpdates: any = {};
+
+      if (updateData.storeName) allowedUpdates.storeName = updateData.storeName;
+      if (updateData.storeEmail) allowedUpdates.storeEmail = updateData.storeEmail;
+      if (updateData.gstNumber) allowedUpdates.gstNumber = updateData.gstNumber;
+      if (updateData.contactNumber) allowedUpdates.contactNumber = updateData.contactNumber;
+      if (updateData.storeCategory) allowedUpdates.storeCategory = updateData.storeCategory;
+      if (updateData.storeSubCategory) allowedUpdates.storeSubCategory = updateData.storeSubCategory;
+      if (updateData.storeLocation) allowedUpdates.storeLocation = updateData.storeLocation;
+      if (updateData.profilePhoto) allowedUpdates.profilePhoto = updateData.profilePhoto;
+      if (updateData.shopPhoto) allowedUpdates.shopPhoto = updateData.shopPhoto;
+
+      allowedUpdates.updatedAt = new Date();
+
+      const merchant = await this.merchantModel.findOneAndUpdate(
+        { userId },
+        { $set: allowedUpdates },
+        { new: true, runValidators: true },
+      );
+
+      if (!merchant) {
+        throw new NotFoundException('Merchant not found');
+      }
+
+      return {
+        success: true,
+        message: 'Merchant profile updated successfully',
+        data: merchant,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Failed to update merchant profile: ${error.message}`,
+      );
+    }
+  }
 }
