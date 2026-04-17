@@ -6,6 +6,7 @@ import { Voucher, VoucherSchema } from './schemas/voucher.schema';
 import { BannerPromotion, BannerPromotionSchema } from '../banners/schemas/banner-promotion.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { KafkaModule } from '../kafka/kafka.module';
+import { VouchersKafkaController } from './vouchers.kafka.controller';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { KafkaModule } from '../kafka/kafka.module';
     ]),
     forwardRef(() => KafkaModule),
   ],
-  controllers: [VouchersController],
+  controllers: [VouchersController, VouchersKafkaController],
   providers: [VouchersService],
   exports: [VouchersService],
 })

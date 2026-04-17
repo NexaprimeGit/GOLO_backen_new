@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { OrdersKafkaController } from './orders.kafka.controller';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { Order, OrderSchema } from './schemas/order.schema';
@@ -12,7 +13,7 @@ import { Order, OrderSchema } from './schemas/order.schema';
       { name: User.name, schema: UserSchema },
     ]),
   ],
-  controllers: [OrdersController],
+  controllers: [OrdersController, OrdersKafkaController],
   providers: [OrdersService],
   exports: [OrdersService],
 })

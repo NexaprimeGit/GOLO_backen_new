@@ -101,4 +101,34 @@ export const KAFKA_TOPICS = {
   // Reports Commands
   REPORTS_STATUS: 'reports.status',
 
+  // Voucher Commands
+  VOUCHER_CLAIM: 'voucher.claim',
+  VOUCHER_GET_MY: 'voucher.get.my',
+  VOUCHER_GET_BY_ID: 'voucher.get.by.id',
+  VOUCHER_VERIFY: 'voucher.verify',
+  VOUCHER_REDEEM: 'voucher.redeem',
+  VOUCHER_GENERATE_CODE: 'voucher.generate.code',
+
+  // Voucher Events
+  VOUCHER_CLAIMED: 'voucher.claimed',
+  VOUCHER_VERIFIED: 'voucher.verified',
+  VOUCHER_REDEEMED: 'voucher.redeemed',
+  VOUCHER_SHARED: 'voucher.shared',
+
+  // Orders Commands/Events
+  ORDER_GET_MERCHANT: 'order.get.merchant',
+  ORDER_GET_STATS: 'order.get.stats',
+  ORDER_UPDATE_STATUS: 'order.update.status',
+  ORDER_STATUS_UPDATED: 'order.status.updated',
+
+  // Reviews Commands/Events
+  REVIEW_GET_MERCHANT: 'review.get.merchant',
+  REVIEW_GET_STATS: 'review.get.stats',
+  REVIEW_UPDATE_STATUS: 'review.update.status',
+  REVIEW_STATUS_UPDATED: 'review.status.updated',
+
+  // Merchant Dashboard Commands/Events
+  MERCHANT_DASHBOARD_SUMMARY: 'merchant.dashboard.summary',
+  MERCHANT_DASHBOARD_SUMMARY_GENERATED: 'merchant.dashboard.summary.generated',
+
 };

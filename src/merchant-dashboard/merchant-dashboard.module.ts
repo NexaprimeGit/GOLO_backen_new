@@ -5,6 +5,7 @@ import { Order, OrderSchema } from '../orders/schemas/order.schema';
 import { Review, ReviewSchema } from '../reviews/schemas/review.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { MerchantDashboardController } from './merchant-dashboard.controller';
+import { MerchantDashboardKafkaController } from './merchant-dashboard.kafka.controller';
 import { MerchantDashboardService } from './merchant-dashboard.service';
 
 @Module({
@@ -16,7 +17,7 @@ import { MerchantDashboardService } from './merchant-dashboard.service';
       { name: User.name, schema: UserSchema },
     ]),
   ],
-  controllers: [MerchantDashboardController],
+  controllers: [MerchantDashboardController, MerchantDashboardKafkaController],
   providers: [MerchantDashboardService],
 })
 export class MerchantDashboardModule {}
