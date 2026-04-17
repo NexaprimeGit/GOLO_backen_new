@@ -29,6 +29,12 @@ export class Merchant {
   @Prop()
   storeLocation?: string;
 
+  @Prop({ type: Number })
+  storeLocationLatitude?: number;
+
+  @Prop({ type: Number })
+  storeLocationLongitude?: number;
+
   @Prop({ default: 'active' })
   status: 'active' | 'inactive';
 

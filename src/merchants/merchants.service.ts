@@ -1,0 +1,186 @@
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Merchant, MerchantDocument } from '../users/schemas/merchant.schema';
+import { UpdateStoreLocationDto } from '../users/dto/update-store-location.dto';
+
+@Injectable()
+export class MerchantsService {
+  constructor(
+    @InjectModel(Merchant.name) private merchantModel: Model<MerchantDocument>,
+  ) {}
+
+  /**
+   * Update merchant store location with coordinates
+   * @param userId - Merchant's user ID
+   * @param locationData - Address, latitude, longitude
+   * @returns Updated merchant data
+   */
+  async updateStoreLocation(
+    userId: string,
+    locationData: UpdateStoreLocationDto,
+  ) {
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+
+    // Validate coordinates
+    if (
+      typeof locationData.latitude !== 'number' ||
+      typeof locationData.longitude !== 'number'
+    ) {
+      throw new BadRequestException('Invalid coordinates');
+    }
+
+    if (locationData.latitude < -90 || locationData.latitude > 90) {
+      throw new BadRequestException('Latitude must be between -90 and 90');
+    }
+
+    if (locationData.longitude < -180 || locationData.longitude > 180) {
+      throw new BadRequestException('Longitude must be between -180 and 180');
+    }
+
+    if (!locationData.address || locationData.address.trim().length === 0) {
+      throw new BadRequestException('Address cannot be empty');
+    }
+
+    try {
+      const merchant = await this.merchantModel.findOneAndUpdate(
+        { userId },
+        {
+          storeLocation: locationData.address,
+          storeLocationLatitude: locationData.latitude,
+          storeLocationLongitude: locationData.longitude,
+          updatedAt: new Date(),
+        },
+        { new: true, runValidators: true },
+      );
+
+      if (!merchant) {
+        throw new NotFoundException('Merchant not found');
+      }
+
+      return {
+        success: true,
+        data: {
+          address: merchant.storeLocation,
+          latitude: merchant.storeLocationLatitude,
+          longitude: merchant.storeLocationLongitude,
+          updatedAt: merchant.updatedAt,
+        },
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Failed to update store location: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Get merchant store location
+   * @param userId - Merchant's user ID
+   * @returns Merchant store location with coordinates
+   */
+  async getStoreLocation(userId: string) {
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+
+    try {
+      const merchant = await this.merchantModel.findOne({ userId });
+
+      if (!merchant) {
+        throw new NotFoundException('Merchant not found');
+      }
+
+      return {
+        success: true,
+        data: {
+          address: merchant.storeLocation || null,
+          latitude: merchant.storeLocationLatitude || null,
+          longitude: merchant.storeLocationLongitude || null,
+        },
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Failed to retrieve store location: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Get nearby merchants (for future use)
+   * @param latitude - Center latitude
+   * @param longitude - Center longitude
+   * @param radiusKm - Radius in kilometers
+   * @returns Array of nearby merchants
+   */
+  async getNearbyMerchants(
+    latitude: number,
+    longitude: number,
+    radiusKm: number = 10,
+  ) {
+    if (!latitude || !longitude || !radiusKm) {
+      throw new BadRequestException('Latitude, longitude, and radius are required');
+    }
+
+    try {
+      // Convert radius from km to radians (Earth's radius = 6371 km)
+      const radiusRadians = radiusKm / 6371;
+
+      const merchants = await this.merchantModel.find({
+        $and: [
+          { storeLocationLatitude: { $exists: true, $ne: null } },
+          { storeLocationLongitude: { $exists: true, $ne: null } },
+        ],
+      });
+
+      // Filter merchants based on distance (simple distance calculation)
+      const nearbyMerchants = merchants.filter((merchant) => {
+        const lat1 = latitude;
+        const lon1 = longitude;
+        const lat2 = merchant.storeLocationLatitude;
+        const lon2 = merchant.storeLocationLongitude;
+
+        // Haversine formula
+        const R = 6371; // Earth's radius in km
+        const dLat = ((lat2 - lat1) * Math.PI) / 180;
+        const dLon = ((lon2 - lon1) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c;
+
+        return distance <= radiusKm;
+      });
+
+      return {
+        success: true,
+        data: nearbyMerchants.map((m) => ({
+          merchantId: m.userId,
+          storeName: m.storeName,
+          address: m.storeLocation,
+          latitude: m.storeLocationLatitude,
+          longitude: m.storeLocationLongitude,
+        })),
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to find nearby merchants: ${error.message}`,
+      );
+    }
+  }
+}

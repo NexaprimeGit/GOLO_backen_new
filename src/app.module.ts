@@ -14,10 +14,7 @@ import { RedisModule } from './common/services/redis.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { MerchantProductsModule } from './merchant-products/merchant-products.module';
 import { BannersModule } from './banners/banners.module';
-import { VouchersModule } from './vouchers/vouchers.module';
-import { OrdersModule } from './orders/orders.module';
-import { ReviewsModule } from './reviews/reviews.module';
-import { MerchantDashboardModule } from './merchant-dashboard/merchant-dashboard.module';
+import { MerchantsModule } from './merchants/merchants.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -58,6 +55,7 @@ const logger = new Logger('MongoDB');
     KafkaModule,
     AdsModule,
     UsersModule,
+    MerchantsModule,
     PaymentsModule,
     ChatsModule,
     CallsModule,
@@ -66,10 +64,6 @@ const logger = new Logger('MongoDB');
     AnalyticsModule,
     MerchantProductsModule,
     BannersModule,
-    VouchersModule,
-    OrdersModule,
-    ReviewsModule,
-    MerchantDashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
