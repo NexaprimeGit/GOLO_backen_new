@@ -24,7 +24,7 @@ export class Voucher {
   @Prop({ required: true, unique: true, index: true })
   qrCode: string; // Actual QR code data to scan - "voucher-{voucherId}-{merchantId}"
 
-  @Prop({ required: false, unique: true, sparse: true, index: true })
+  @Prop({ required: false })
   verificationCode?: string; // Manual verification code - "GKV8-5DKE-JVED"
 
   @Prop({ required: true, index: true })
@@ -89,3 +89,11 @@ VoucherSchema.index({ userId: 1, status: 1 });
 VoucherSchema.index({ merchantId: 1, status: 1 });
 VoucherSchema.index({ expiresAt: 1, status: 1 });
 VoucherSchema.index({ qrCode: 1, status: 1 });
+VoucherSchema.index(
+  { verificationCode: 1 },
+  {
+    unique: true,
+    name: 'verificationCode_1',
+    partialFilterExpression: { verificationCode: { $type: 'string' } },
+  },
+);

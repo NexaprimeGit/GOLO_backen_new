@@ -1,15 +1,25 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isValidObjectId, Model, Types } from 'mongoose';
 import * as QRCode from 'qrcode';
 import { randomInt } from 'crypto';
 import { Voucher, VoucherStatus, VoucherDocument } from './schemas/voucher.schema';
-import { BannerPromotionDocument } from '../banners/schemas/banner-promotion.schema';
+import {
+  BannerPromotionDocument,
+  BannerPromotionType,
+} from '../banners/schemas/banner-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
 
 @Injectable()
 export class VouchersService implements OnModuleInit {
   private readonly logger = new Logger('VouchersService');
+  private readonly legacyOfferCategorySet = new Set([
+    'special',
+    'festival',
+    'limited time',
+    'combo',
+    'clearance',
+  ]);
 
   constructor(
     @InjectModel('Voucher') private voucherModel: Model<VoucherDocument>,
@@ -25,26 +35,41 @@ export class VouchersService implements OnModuleInit {
         { verificationCode: null },
         { $unset: { verificationCode: 1 } },
       );
+      const existingIndexes = await this.voucherModel.collection
+        .listIndexes()
+        .toArray();
 
-      // Drop stale unique index (could be non-sparse) if it exists.
-      try {
-        await this.voucherModel.collection.dropIndex('verificationCode_1');
-      } catch (error) {
-        if (error?.codeName !== 'IndexNotFound') {
-          throw error;
-        }
-      }
-
-      // Recreate index to enforce uniqueness only for real string codes.
-      await this.voucherModel.collection.createIndex(
-        { verificationCode: 1 },
-        {
-          unique: true,
-          partialFilterExpression: { verificationCode: { $type: 'string' } },
-          name: 'verificationCode_1',
-        },
+      const verificationCodeIndex = existingIndexes.find(
+        (index) => index.name === 'verificationCode_1',
       );
+
+      const hasDesiredVerificationCodeIndex =
+        Boolean(verificationCodeIndex?.unique) &&
+        verificationCodeIndex?.partialFilterExpression?.verificationCode?.$type ===
+          'string';
+
+      if (!hasDesiredVerificationCodeIndex) {
+        // Replace legacy sparse index with partial index (or create fresh if missing).
+        if (verificationCodeIndex) {
+          await this.voucherModel.collection.dropIndex('verificationCode_1');
+        }
+
+        await this.voucherModel.collection.createIndex(
+          { verificationCode: 1 },
+          {
+            unique: true,
+            partialFilterExpression: { verificationCode: { $type: 'string' } },
+            name: 'verificationCode_1',
+          },
+        );
+      }
     } catch (error) {
+      if (error?.code === 86 || error?.codeName === 'IndexKeySpecsConflict') {
+        this.logger.warn(
+          'verificationCode_1 index already exists with a different definition; skipping index migration for this startup.',
+        );
+        return;
+      }
       this.logger.error(`Error ensuring verification code index: ${error.message}`);
       throw error;
     }
@@ -87,14 +112,40 @@ export class VouchersService implements OnModuleInit {
     return this.generateCode(3, 4, '-');
   }
 
+  private isLikelyOffer(offer: {
+    promotionType?: BannerPromotionType;
+    bannerCategory?: string;
+    bannerTitle?: string;
+  }): boolean {
+    if (offer?.promotionType === BannerPromotionType.OFFER) {
+      return true;
+    }
+
+    if (offer?.promotionType) {
+      return false;
+    }
+
+    const category = String(offer?.bannerCategory || '').trim().toLowerCase();
+    if (this.legacyOfferCategorySet.has(category)) {
+      return true;
+    }
+
+    const title = String(offer?.bannerTitle || '').trim().toLowerCase();
+    return title.includes('offer') || title.includes('deal');
+  }
+
   /**
    * Claim an offer - User claims a deal and gets a voucher/QR code
    */
   async claimOffer(userId: string, offerId: string) {
     try {
+      if (!isValidObjectId(offerId)) {
+        throw new NotFoundException('Offer not found');
+      }
+
       // Validate offer exists
       const offer = await this.bannerModel.findById(offerId);
-      if (!offer) {
+      if (!offer || !this.isLikelyOffer(offer)) {
         throw new NotFoundException('Offer not found');
       }
 
@@ -778,7 +829,7 @@ export class VouchersService implements OnModuleInit {
   ) {
     try {
       // Get merchant's banners/offers from BannerPromotion
-      const query: any = { merchantId };
+      const query: any = { merchantId, promotionType: BannerPromotionType.OFFER };
       if (status) query.status = status;
 
       const skip = (page - 1) * limit;

@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { KafkaModule } from '../kafka/kafka.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
 import {
   BannerPromotion,
   BannerPromotionSchema,
@@ -14,6 +15,7 @@ import { BannersService } from './banners.service';
     MongooseModule.forFeature([
       { name: BannerPromotion.name, schema: BannerPromotionSchema },
       { name: User.name, schema: UserSchema },
+      { name: Merchant.name, schema: MerchantSchema },
     ]),
     forwardRef(() => KafkaModule),
   ],

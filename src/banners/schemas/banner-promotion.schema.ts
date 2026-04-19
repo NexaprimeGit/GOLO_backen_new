@@ -16,6 +16,11 @@ export enum BannerPaymentStatus {
   PAID = 'paid',
 }
 
+export enum BannerPromotionType {
+  BANNER = 'banner',
+  OFFER = 'offer',
+}
+
 @Schema({ timestamps: true, collection: 'banner_promotions' })
 export class BannerPromotion {
   @Prop({ required: true, unique: true, index: true })
@@ -35,6 +40,9 @@ export class BannerPromotion {
 
   @Prop({ required: true })
   bannerCategory: string;
+
+  @Prop({ enum: BannerPromotionType, default: BannerPromotionType.BANNER, index: true })
+  promotionType: BannerPromotionType;
 
   @Prop({})
   imageUrl: string;
@@ -62,6 +70,49 @@ export class BannerPromotion {
 
   @Prop({ required: true })
   totalPrice: number;
+
+  @Prop({ default: false })
+  loyaltyRewardEnabled: boolean;
+
+  @Prop({ default: 0 })
+  loyaltyStarsToOffer: number;
+
+  @Prop({ default: 1 })
+  loyaltyStarsPerPurchase: number;
+
+  @Prop({ default: 10 })
+  loyaltyScorePerStar: number;
+
+  @Prop({ default: '' })
+  promotionExpiryText: string;
+
+  @Prop({ default: '' })
+  termsAndConditions: string;
+
+  @Prop({ default: '' })
+  exampleUsage: string;
+
+  @Prop({
+    type: [
+      {
+        productId: { type: String, required: true },
+        productName: { type: String, required: true },
+        imageUrl: { type: String, default: '' },
+        originalPrice: { type: Number, required: true, min: 0 },
+        offerPrice: { type: Number, required: true, min: 0 },
+        stockQuantity: { type: Number, default: 0, min: 0 },
+      },
+    ],
+    default: [],
+  })
+  selectedProducts: Array<{
+    productId: string;
+    productName: string;
+    imageUrl?: string;
+    originalPrice: number;
+    offerPrice: number;
+    stockQuantity?: number;
+  }>;
 
   @Prop({ enum: BannerPromotionStatus, default: BannerPromotionStatus.UNDER_REVIEW, index: true })
   status: BannerPromotionStatus;
@@ -97,4 +148,5 @@ export class BannerPromotion {
 export const BannerPromotionSchema = SchemaFactory.createForClass(BannerPromotion);
 
 BannerPromotionSchema.index({ merchantId: 1, createdAt: -1 });
+BannerPromotionSchema.index({ merchantId: 1, promotionType: 1, createdAt: -1 });
 BannerPromotionSchema.index({ status: 1, paymentStatus: 1, startDate: 1, endDate: 1 });

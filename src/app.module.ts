@@ -16,6 +16,7 @@ import { MerchantProductsModule } from './merchant-products/merchant-products.mo
 import { MerchantDashboardModule } from './merchant-dashboard/merchant-dashboard.module';
 import { BannersModule } from './banners/banners.module';
 import { MerchantsModule } from './merchants/merchants.module';
+import { OrdersModule } from './orders/orders.module';
 import { VouchersModule } from './vouchers/vouchers.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -67,6 +68,7 @@ const logger = new Logger('MongoDB');
     MerchantProductsModule,
     MerchantDashboardModule,
     BannersModule,
+    OrdersModule,
     VouchersModule,
   ],
   controllers: [AppController],
