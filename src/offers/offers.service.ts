@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, isValidObjectId } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,7 +11,7 @@ import { Merchant, MerchantDocument } from '../users/schemas/merchant.schema';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 
 @Injectable()
-export class OffersService {
+export class OffersService implements OnModuleInit {
   private readonly logger = new Logger(OffersService.name);
 
   constructor(
@@ -92,6 +92,25 @@ export class OffersService {
   // Legacy detection removed — offers are handled only from `offers` collection
   private isLikelyLegacyOffer(_: any): boolean {
     return false;
+  }
+
+  async onModuleInit() {
+    try {
+      const indexes = await this.offerModel.collection.indexes();
+      const staleIdempotencyIndexes = indexes.filter((idx: any) => {
+        const keys = Object.keys(idx?.key || {});
+        return keys.includes('idempotencyKey');
+      });
+
+      for (const indexDef of staleIdempotencyIndexes) {
+        const indexName = indexDef?.name;
+        if (!indexName) continue;
+        await this.offerModel.collection.dropIndex(indexName);
+        this.logger.warn(`[Offers] Dropped legacy index on startup: ${indexName}`);
+      }
+    } catch (error) {
+      this.logger.warn(`[Offers] Index cleanup skipped: ${error?.message || 'unknown error'}`);
+    }
   }
 
   async submitOfferPromotionRequest(merchantId: string, payload: any) {
