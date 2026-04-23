@@ -75,6 +75,26 @@ export class BannersService implements OnModuleInit {
     return earthRadiusKm * c;
   }
 
+  private hasValidMerchantCoordinates(
+    latitude: number,
+    longitude: number,
+  ): boolean {
+    const inValidRange =
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
+
+    // (0,0) is a common placeholder/invalid value for this app.
+    if (!inValidRange) {
+      return false;
+    }
+
+    return !(Math.abs(latitude) < 0.000001 && Math.abs(longitude) < 0.000001);
+  }
+
   private isLikelyLegacyOffer(row: {
     promotionType?: BannerPromotionType;
     bannerCategory?: string;
@@ -219,6 +239,28 @@ export class BannersService implements OnModuleInit {
     if (merchant.role !== 'merchant' && merchant.accountType !== 'merchant') {
       throw new ForbiddenException(
         'Only merchants can submit banner promotion requests',
+      );
+    }
+
+    const merchantProfile = await this.merchantModel
+      .findOne({ userId: merchantId })
+      .select('storeLocation storeLocationLatitude storeLocationLongitude')
+      .lean()
+      .exec();
+
+    const merchantLatitude = Number(merchantProfile?.storeLocationLatitude);
+    const merchantLongitude = Number(merchantProfile?.storeLocationLongitude);
+    const hasStoreCoordinates =
+      Number.isFinite(merchantLatitude) &&
+      Number.isFinite(merchantLongitude) &&
+      merchantLatitude >= -90 &&
+      merchantLatitude <= 90 &&
+      merchantLongitude >= -180 &&
+      merchantLongitude <= 180;
+
+    if (!hasStoreCoordinates) {
+      throw new BadRequestException(
+        'Store coordinates missing. Please set your store location on merchant profile map before publishing offers.',
       );
     }
 
@@ -662,6 +704,7 @@ export class BannersService implements OnModuleInit {
   }) {
     const safePage = Math.max(1, Number(params.page) || 1);
     const safeLimit = Math.min(50, Math.max(1, Number(params.limit) || 20));
+    const prefetchLimit = Math.min(300, Math.max(120, safeLimit * 8));
     const safeRadiusKm = Math.min(100, Math.max(1, Number(params.radiusKm) || 5));
     const locationNeedle = String(params.location || '').trim().toLowerCase();
     const queryNeedle = String(params.query || '').trim().toLowerCase();
@@ -675,20 +718,60 @@ export class BannersService implements OnModuleInit {
       typeof params.longitude === 'number' &&
       !Number.isNaN(params.longitude);
 
-    let offerRows = await this.bannerPromotionModel
-      .find({
-        status: {
-          $nin: [
-            BannerPromotionStatus.REJECTED,
-            BannerPromotionStatus.EXPIRED,
-          ],
-        },
-      })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    let offerRows: any[] = [];
+    try {
+offerRows = await this.bannerPromotionModel
+        .find({
+          promotionType: BannerPromotionType.OFFER,
+          status: {
+            $in: [
+              BannerPromotionStatus.UNDER_REVIEW,
+              BannerPromotionStatus.APPROVED,
+              BannerPromotionStatus.ACTIVE,
+            ],
+          },
+        })
+        .select(
+          'requestId merchantId merchantName bannerTitle bannerCategory totalPrice startDate endDate status createdAt promotionType imageUrl selectedProducts',
+        )
+        .limit(prefetchLimit)
+        .maxTimeMS(7000)
+        .lean()
+        .exec();
 
-    offerRows = offerRows.filter((row) => this.isLikelyLegacyOffer(row));
+      if (!offerRows.length) {
+        const legacyRows = await this.bannerPromotionModel
+          .find({
+            status: {
+              $in: [
+                BannerPromotionStatus.UNDER_REVIEW,
+                BannerPromotionStatus.APPROVED,
+                BannerPromotionStatus.ACTIVE,
+              ],
+            },
+          })
+          .select(
+            'requestId merchantId merchantName bannerTitle bannerCategory totalPrice startDate endDate status createdAt promotionType imageUrl selectedProducts',
+          )
+          .limit(prefetchLimit)
+          .maxTimeMS(5000)
+          .lean()
+          .exec();
+
+        offerRows = legacyRows.filter((row) => this.isLikelyLegacyOffer(row));
+      }
+    } catch (error: any) {
+      this.logger.error(`Nearby offers query failed: ${error?.message || error}`);
+      return {
+        data: [],
+        pagination: {
+          page: safePage,
+          limit: safeLimit,
+          total: 0,
+          pages: 0,
+        },
+      };
+    }
 
     if (!offerRows.length) {
       return {
@@ -702,18 +785,96 @@ export class BannersService implements OnModuleInit {
       };
     }
 
+// Fetch merchant data even in fast path to get store locations
     const merchantIds = Array.from(new Set(offerRows.map((row) => String(row.merchantId))));
-    const merchants = await this.merchantModel
-      .find({ userId: { $in: merchantIds } })
-      .select(
-        'userId storeName storeCategory storeSubCategory storeLocation storeLocationLatitude storeLocationLongitude profilePhoto shopPhoto',
-      )
-      .lean()
-      .exec();
+    let merchants: any[] = [];
+    try {
+      merchants = await this.merchantModel
+        .find({ userId: { $in: merchantIds } })
+        .select(
+          'userId storeName storeCategory storeSubCategory storeLocation storeLocationLatitude storeLocationLongitude profilePhoto shopPhoto',
+        )
+        .maxTimeMS(8000)
+        .lean()
+        .exec();
+    } catch (error: any) {
+      this.logger.error(`Nearby merchants query failed: ${error?.message || error}`);
+      merchants = [];
+    }
 
     const merchantsByUserId = new Map<string, any>(
       merchants.map((merchant) => [String(merchant.userId), merchant]),
     );
+
+    // Fast path: no geo filtering requested.
+    if (!hasUserCoordinates && !locationNeedle) {
+      let normalized = offerRows.map((row) => {
+        const merchant = merchantsByUserId.get(String(row.merchantId));
+        return {
+          offerId: String(row._id),
+          requestId: row.requestId,
+          title: row.bannerTitle,
+          category: row.bannerCategory,
+          imageUrl: row.imageUrl || '',
+          totalPrice: Number(row.totalPrice || 0),
+          displayPrice: Number(row.totalPrice || 0),
+          discountPercent: 0,
+          startsAt: row.startDate,
+          endsAt: row.endDate,
+          status: row.status,
+          isActiveNow: false,
+          distanceKm: null as number | null,
+          merchant: {
+            merchantId: String(row.merchantId),
+            name: merchant?.storeName || row.merchantName || 'Merchant',
+            category: merchant?.storeCategory || '',
+            subCategory: merchant?.storeSubCategory || '',
+            address: merchant?.storeLocation || '',
+            latitude: merchant?.storeLocationLatitude || null,
+            longitude: merchant?.storeLocationLongitude || null,
+            profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
+          },
+          selectedProducts: Array.isArray(row.selectedProducts) ? row.selectedProducts : [],
+          createdAt: row.createdAt,
+        };
+      });
+
+      if (queryNeedle) {
+        normalized = normalized.filter((row) => {
+          const blob = `${row.title || ''} ${row.category || ''} ${row.merchant.name || ''}`.toLowerCase();
+          return blob.includes(queryNeedle);
+        });
+      }
+
+      if (categoryNeedle) {
+        normalized = normalized.filter(
+          (row) => String(row.category || '').toLowerCase() === categoryNeedle,
+        );
+      }
+
+      if (!Number.isNaN(maxPrice) && maxPrice > 0) {
+        normalized = normalized.filter((row) => row.displayPrice <= maxPrice);
+      }
+
+      normalized.sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+      );
+
+      const total = normalized.length;
+      const pages = Math.ceil(total / safeLimit);
+      const start = (safePage - 1) * safeLimit;
+
+      return {
+        data: normalized.slice(start, start + safeLimit),
+        pagination: {
+          page: safePage,
+          limit: safeLimit,
+          total,
+          pages,
+        },
+      };
+}
 
     const now = new Date();
 
@@ -721,8 +882,10 @@ export class BannersService implements OnModuleInit {
       const merchant = merchantsByUserId.get(String(row.merchantId));
       const latitude = Number(merchant?.storeLocationLatitude);
       const longitude = Number(merchant?.storeLocationLongitude);
-      const hasMerchantCoordinates =
-        !Number.isNaN(latitude) && !Number.isNaN(longitude);
+      const hasMerchantCoordinates = this.hasValidMerchantCoordinates(
+        latitude,
+        longitude,
+      );
 
       let distanceKm: number | null = null;
       if (hasUserCoordinates && hasMerchantCoordinates) {
@@ -734,9 +897,7 @@ export class BannersService implements OnModuleInit {
         );
       }
 
-      const selectedProducts = Array.isArray(row.selectedProducts)
-        ? row.selectedProducts
-        : [];
+      const selectedProducts: any[] = Array.isArray(row.selectedProducts) ? row.selectedProducts : [];
 
       const computedBestDiscountPercent = selectedProducts.reduce(
         (best, product) => {
@@ -768,7 +929,7 @@ export class BannersService implements OnModuleInit {
         requestId: row.requestId,
         title: row.bannerTitle,
         category: row.bannerCategory,
-        imageUrl: row.imageUrl,
+        imageUrl: row.imageUrl || '',
         totalPrice: Number(row.totalPrice || 0),
         displayPrice:
           lowestOfferPrice !== Number.MAX_SAFE_INTEGER
@@ -798,9 +959,14 @@ export class BannersService implements OnModuleInit {
     if (hasUserCoordinates) {
       normalized = normalized.filter((row) => {
         if (row.distanceKm === null) {
-          return locationNeedle
-            ? String(row.merchant.address || '').toLowerCase().includes(locationNeedle)
-            : false;
+          // Keep rows without coordinates visible instead of dropping all results.
+          // When location text is provided, restrict these fallback rows by address match.
+          if (locationNeedle) {
+            return String(row.merchant.address || '')
+              .toLowerCase()
+              .includes(locationNeedle);
+          }
+          return true;
         }
         return row.distanceKm <= safeRadiusKm;
       });
@@ -857,6 +1023,11 @@ export class BannersService implements OnModuleInit {
         const distanceB = b.distanceKm ?? Number.MAX_SAFE_INTEGER;
         return distanceA - distanceB;
       });
+    } else {
+      normalized.sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+      );
     }
 
     const total = normalized.length;

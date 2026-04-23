@@ -202,7 +202,7 @@ export class BannersController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const data = await this.bannersService.getNearbyOffers({
+    const requestPayload = {
       latitude: lat ? Number(lat) : undefined,
       longitude: lng ? Number(lng) : undefined,
       radiusKm: radiusKm ? Number(radiusKm) : undefined,
@@ -213,7 +213,33 @@ export class BannersController {
       maxPrice: maxPrice ? Number(maxPrice) : undefined,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
+    };
+
+    const fallbackPage = requestPayload.page && requestPayload.page > 0 ? requestPayload.page : 1;
+    const fallbackLimit =
+      requestPayload.limit && requestPayload.limit > 0 ? requestPayload.limit : 20;
+
+    const timeoutPromise = new Promise<{
+      data: any[];
+      pagination: { page: number; limit: number; total: number; pages: number };
+    }>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          data: [],
+          pagination: {
+            page: fallbackPage,
+            limit: fallbackLimit,
+            total: 0,
+            pages: 0,
+          },
+        });
+      }, 8000);
     });
+
+    const data = await Promise.race([
+      this.bannersService.getNearbyOffers(requestPayload),
+      timeoutPromise,
+    ]);
 
     return {
       success: true,

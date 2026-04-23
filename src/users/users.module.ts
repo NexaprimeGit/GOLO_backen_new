@@ -11,7 +11,7 @@ import { Merchant, MerchantSchema } from './schemas/merchant.schema';
 import { UserReport, UserReportSchema } from './schemas/user-report.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { KafkaModule } from '../kafka/kafka.module';
-import { AdsModule } from 'src/ads/ads.module';
+import { AdsModule } from '../ads/ads.module';
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 
 @Module({
@@ -20,6 +20,7 @@ import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
       { name: User.name, schema: UserSchema },
       { name: Notification.name, schema: NotificationSchema },
       { name: Merchant.name, schema: MerchantSchema },
+      { name: 'PendingMerchantLocation', schema: require('./schemas/pending-merchant-location.schema').PendingMerchantLocationSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: UserReport.name, schema: UserReportSchema },
     ]),

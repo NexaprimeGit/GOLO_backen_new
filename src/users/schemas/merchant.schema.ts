@@ -35,6 +35,15 @@ export class Merchant {
   @Prop({ type: Number })
   storeLocationLongitude?: number;
 
+  @Prop({ type: Object, default: null })
+  offerTemplate?: any;
+
+  @Prop({ type: [String], default: [] })
+  offerPromotionIds?: string[];
+
+  @Prop({ default: false })
+  nearbyOffersPrimaryUnsupported?: boolean;
+
   @Prop()
   profilePhoto?: string;
 

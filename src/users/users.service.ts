@@ -70,6 +70,7 @@ export class UsersService implements OnModuleInit {
     @Optional() private kafkaService?: KafkaService,
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
     @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
+    @Optional() @InjectModel('PendingMerchantLocation') private pendingLocationModel?: Model<any>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
@@ -92,6 +93,36 @@ export class UsersService implements OnModuleInit {
     } else {
       this.logger.warn('SMTP credentials missing; email OTP functionality disabled');
     }
+  }
+
+  // Save a pending merchant location for later sync
+  async savePendingMerchantLocation(payload: { email: string; address: string; latitude: number; longitude: number }) {
+    const normalizedEmail = String(payload.email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new BadRequestException('Email is required');
+    const doc = await this.pendingLocationModel.findOneAndUpdate(
+      { email: normalizedEmail },
+      { $set: { address: payload.address || '', latitude: Number(payload.latitude), longitude: Number(payload.longitude), updatedAt: new Date() } },
+      { upsert: true, new: true },
+    ).lean().exec();
+    return doc;
+  }
+
+  // Sync pending merchant location into merchant profile
+  async syncPendingMerchantLocation(userId: string, email: string) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) return null;
+    const pending = await this.pendingLocationModel.findOne({ email: normalizedEmail }).lean().exec();
+    if (!pending) return null;
+    // find merchant by userId
+    const merchant = await this.merchantModel.findOne({ userId: userId }).exec();
+    if (!merchant) return null;
+    const pendingAny: any = pending;
+    merchant.storeLocation = pendingAny.address || merchant.storeLocation;
+    merchant.storeLocationLatitude = Number(pendingAny.latitude);
+    merchant.storeLocationLongitude = Number(pendingAny.longitude);
+    await merchant.save();
+    await this.pendingLocationModel.deleteOne({ email: normalizedEmail }).exec();
+    return merchant;
   }
 
   async onModuleInit() {
@@ -134,6 +165,25 @@ export class UsersService implements OnModuleInit {
       if (!registerDto.storeEmail?.trim()) {
         throw new BadRequestException('Store email is required for merchant registration');
       }
+      if (!registerDto.storeLocation?.trim()) {
+        throw new BadRequestException('Store location is required for merchant registration');
+      }
+
+      const latitude = Number(registerDto.storeLocationLatitude);
+      const longitude = Number(registerDto.storeLocationLongitude);
+      const hasValidCoordinates =
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+
+      if (!hasValidCoordinates) {
+        throw new BadRequestException(
+          'Please select store location on map to capture valid coordinates',
+        );
+      }
     }
 
     const assignedRole = isSystemAdmin
@@ -159,6 +209,9 @@ export class UsersService implements OnModuleInit {
     const savedUser = await user.save();
 
     if (accountType === 'merchant') {
+      const latitude = Number(registerDto.storeLocationLatitude);
+      const longitude = Number(registerDto.storeLocationLongitude);
+
       await this.merchantModel.create({
         userId: savedUser._id.toString(),
         storeName: registerDto.storeName?.trim(),
@@ -168,6 +221,8 @@ export class UsersService implements OnModuleInit {
         storeCategory: registerDto.storeCategory?.trim() || undefined,
         storeSubCategory: registerDto.storeSubCategory?.trim() || undefined,
         storeLocation: registerDto.storeLocation?.trim() || undefined,
+        storeLocationLatitude: latitude,
+        storeLocationLongitude: longitude,
         status: 'active',
       });
     }
@@ -188,11 +243,14 @@ export class UsersService implements OnModuleInit {
   }
 
   async login(loginDto: LoginDto, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
-    this.logger.log(`Login attempt: ${loginDto.email}`);
+    this.logger.log(`Login attempt: ${loginDto.email} (accountType: ${loginDto.accountType})`);
     
     const user = await this.userModel.findOne({ email: loginDto.email }).exec();
     if (!user) {
       this.logger.warn(`Login failed - user not found: ${loginDto.email}`);
+      if (loginDto.accountType === 'merchant') {
+        throw new UnauthorizedException('This email is not registered as a merchant. Please register as a merchant first.');
+      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -200,6 +258,16 @@ export class UsersService implements OnModuleInit {
     if (!isPasswordValid) {
       this.logger.warn(`Login failed - invalid password: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
+      this.logger.warn(`Login failed - merchant login attempted with user account: ${loginDto.email}`);
+      throw new UnauthorizedException('This email is not registered as a merchant. Please use the User login or register as a merchant.');
+    }
+
+    if (loginDto.accountType === 'user' && user.accountType === 'merchant') {
+      this.logger.warn(`Login failed - user login attempted with merchant account: ${loginDto.email}`);
+      throw new UnauthorizedException('This email is registered as a merchant. Please use Merchant login to continue.');
     }
 
     if (user.isBanned) {
@@ -213,10 +281,6 @@ export class UsersService implements OnModuleInit {
         // Ban expired, auto-unban
         await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
       }
-    }
-
-    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
-      throw new UnauthorizedException('Merchant account not found for this email');
     }
 
     if (user.accountType === 'merchant' && user.role !== UserRole.ADMIN && user.role !== UserRole.MERCHANT) {
@@ -424,9 +488,17 @@ export class UsersService implements OnModuleInit {
       throw new ForbiddenException('Merchant access required');
     }
 
-    const merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec();
-    if (!merchant) throw new NotFoundException('Merchant profile not found');
-    return merchant;
+    let merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).exec();
+    if (!merchant) {
+      // Auto-create merchant profile to avoid 404s in the frontend
+      merchant = await this.merchantModel.create({
+        userId: user._id.toString(),
+        storeName: user.name || '',
+        storeEmail: user.email || '',
+        status: 'active',
+      });
+    }
+    return merchant.toObject ? merchant.toObject() : merchant;
   }
 
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {

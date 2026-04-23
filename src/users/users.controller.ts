@@ -132,6 +132,21 @@ export class UsersController {
     return { success: true, data };
   }
 
+  // Save pending merchant location (used when frontend couldn't submit coords during register)
+  @Post('pending-location')
+  async savePendingMerchantLocation(@Body() body: { email: string; address: string; latitude: number; longitude: number }) {
+    const res = await this.usersService.savePendingMerchantLocation(body);
+    return { success: true, data: res };
+  }
+
+  // Sync pending merchant location into merchant profile after login
+  @Post('pending-location/sync')
+  @UseGuards(JwtAuthGuard)
+  async syncPendingMerchantLocation(@CurrentUser() user: any) {
+    const res = await this.usersService.syncPendingMerchantLocation(user.id, user.email);
+    return { success: true, data: res };
+  }
+
   @Put('profile')
   @UseGuards(JwtAuthGuard)
   async updateProfile(@CurrentUser() user: any, @Body() data: any) {

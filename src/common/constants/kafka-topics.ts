@@ -26,6 +26,11 @@ export const KAFKA_TOPICS = {
   BANNER_PROMOTION_REVIEWED: 'banner.promotion.reviewed',
   BANNER_PROMOTION_PAID: 'banner.promotion.paid',
   BANNER_PROMOTION_DELETED: 'banner.promotion.deleted',
+  // Offer Promotion Events (separate topic namespace)
+  OFFER_PROMOTION_SUBMITTED: 'offer.promotion.submitted',
+  OFFER_PROMOTION_REVIEWED: 'offer.promotion.reviewed',
+  OFFER_PROMOTION_PAID: 'offer.promotion.paid',
+  OFFER_PROMOTION_DELETED: 'offer.promotion.deleted',
   
   // Responses
   AD_RESPONSE: 'ad.response',

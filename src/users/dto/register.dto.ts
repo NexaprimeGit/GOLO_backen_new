@@ -1,4 +1,15 @@
-import { IsString, IsEmail, IsNotEmpty, MinLength, IsOptional, IsPhoneNumber, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsEmail,
+  IsNotEmpty,
+  MinLength,
+  IsOptional,
+  IsPhoneNumber,
+  IsIn,
+  IsNumber,
+  Min,
+  Max,
+} from 'class-validator';
 
 export class RegisterDto {
   @IsString()
@@ -48,6 +59,18 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   storeLocation?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  storeLocationLatitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  storeLocationLongitude?: number;
 }
 
 // No separate Merchant DTO needed anymore

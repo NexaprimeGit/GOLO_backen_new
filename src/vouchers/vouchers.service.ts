@@ -8,6 +8,7 @@ import {
   BannerPromotionDocument,
   BannerPromotionType,
 } from '../banners/schemas/banner-promotion.schema';
+import { OfferPromotionDocument, OfferPromotionStatus } from '../offers/schemas/offer-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
 import { MerchantDocument } from '../users/schemas/merchant.schema';
 
@@ -26,6 +27,8 @@ export class VouchersService implements OnModuleInit {
     @InjectModel('Voucher') private voucherModel: Model<VoucherDocument>,
     @InjectModel('BannerPromotion')
     private bannerModel: Model<BannerPromotionDocument>,
+    @InjectModel('OfferPromotion')
+    private offerModel: Model<OfferPromotionDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
   ) {}
@@ -187,7 +190,7 @@ export class VouchersService implements OnModuleInit {
     }
   }
 
-  private isLikelyOffer(offer: {
+private isLikelyOffer(offer: {
     promotionType?: BannerPromotionType;
     bannerCategory?: string;
     bannerTitle?: string;
@@ -210,19 +213,41 @@ export class VouchersService implements OnModuleInit {
   }
 
   /**
-   * Claim an offer - User claims a deal and gets a voucher/QR code
+   * Find offer from either BannerPromotion or OfferPromotion collection
    */
+  private async findOfferById(offerId: string): Promise<{ offer: any; source: 'banner' | 'offer' } | null> {
+    // Try BannerPromotion first
+    const bannerOffer = await this.bannerModel.findById(offerId).lean().exec();
+    if (bannerOffer) {
+      return { offer: bannerOffer, source: 'banner' };
+    }
+
+    // Try OfferPromotion
+    const offer = await this.offerModel.findById(offerId).lean().exec();
+    if (offer) {
+      return { offer, source: 'offer' };
+    }
+
+    return null;
+  }
+
+  /**
+    * Claim an offer - User claims a deal and gets a voucher/QR code
+    */
   async claimOffer(userId: string, offerId: string) {
     try {
       if (!isValidObjectId(offerId)) {
         throw new NotFoundException('Offer not found');
       }
 
-      // Validate offer exists
-      const offer = await this.bannerModel.findById(offerId);
-      if (!offer || !this.isLikelyOffer(offer)) {
-        throw new NotFoundException('Offer not found');
-      }
+      // Find offer from either collection
+      const offerResult = await this.findOfferById(offerId);
+if (!offerResult) {
+          throw new NotFoundException('Offer not found');
+        }
+
+      const offer = offerResult.offer;
+      const isFromOfferCollection = offerResult.source === 'offer';
 
       // Check if voucher already claimed for this offer
       const existingVoucher = await this.voucherModel.findOne({
@@ -253,6 +278,23 @@ export class VouchersService implements OnModuleInit {
       // Calculate expiry (30 days from now)
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
+      // Get offer title and merchant info based on source
+      const offerTitle = isFromOfferCollection 
+        ? offer.title 
+        : offer.bannerTitle;
+      const merchantName = isFromOfferCollection
+        ? offer.merchantName
+        : offer.merchantName;
+      const merchantId = isFromOfferCollection
+        ? offer.merchantId
+        : offer.merchantId;
+      const category = isFromOfferCollection
+        ? offer.category
+        : offer.bannerCategory;
+      const imageUrl = isFromOfferCollection
+        ? offer.imageUrl
+        : offer.imageUrl;
+
       // Create voucher
       const voucher = await this.voucherModel.create({
         userId: new Types.ObjectId(userId),
@@ -261,19 +303,16 @@ export class VouchersService implements OnModuleInit {
         qrCode,
         verificationCode,
         qrImage,
-        merchantId: offer.merchantId, // From banner/offer
-        offerTitle: offer.bannerTitle,
-        merchantName: offer.merchantName,
-        discount: offer.bannerCategory || 'Special Offer', // Adjust based on your banner schema
-        offerImage: offer.imageUrl,
+        merchantId: new Types.ObjectId(String(merchantId)),
+        offerTitle,
+        merchantName,
+        discount: category || 'Special Offer',
+        offerImage: imageUrl,
         status: VoucherStatus.ACTIVE,
         claimedAt: new Date(),
         expiresAt,
         validityHours: 720, // 30 days
       });
-
-      // Save QR image to a property (you can also save to file system or S3)
-      // For now storing the data URL in response
 
       return {
         success: true,
