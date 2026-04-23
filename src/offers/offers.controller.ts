@@ -108,13 +108,7 @@ export class OffersController {
     return { success: true, ...data, timestamp: new Date().toISOString() };
   }
 
-  @Get(':offerId')
-  async getPublicOfferDetails(@Param('offerId') offerId: string) {
-    const data = await this.offersService.getPublicOfferDetails(offerId);
-    return { success: true, data, timestamp: new Date().toISOString() };
-  }
-
-  // Template endpoints (re-using banners service template helpers)
+  // Template endpoints (must be BEFORE :offerId route)
   @Post('template/save')
   @UseGuards(JwtAuthGuard)
   async saveOfferTemplate(@Body() body: any, @CurrentUser() user: any) {
@@ -134,5 +128,11 @@ export class OffersController {
   async clearOfferTemplate(@CurrentUser() user: any) {
     const data = await this.offersService.clearOfferTemplate(user.id);
     return { success: true, message: 'Offer template cleared successfully', data, timestamp: new Date().toISOString() };
+  }
+
+  @Get(':offerId')
+  async getPublicOfferDetails(@Param('offerId') offerId: string) {
+    const data = await this.offersService.getPublicOfferDetails(offerId);
+    return { success: true, data, timestamp: new Date().toISOString() };
   }
 }
