@@ -94,7 +94,7 @@ export class OffersService {
     return false;
   }
 
-async async submitOfferPromotionRequest(merchantId: string, payload: any) {
+  async submitOfferPromotionRequest(merchantId: string, payload: any) {
     try {
       this.logger.log(`[submitOfferPromotionRequest] merchantId=${merchantId}, payload keys=${Object.keys(payload).join(',')}`);
       
@@ -177,6 +177,7 @@ async async submitOfferPromotionRequest(merchantId: string, payload: any) {
   } catch (error) {
     this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
     throw error;
+  }
   }
 
   async listMerchantOffers(merchantId: string) {
