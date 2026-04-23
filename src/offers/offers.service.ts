@@ -196,20 +196,28 @@ export class OffersService {
 
     if (error?.code === 11000) {
       const field = Object.keys(error?.keyPattern || {})[0] || 'unknown';
-      if (field === 'idempotencyKey') {
-        this.logger.log(`[submitOfferPromotionRequest] Duplicate idempotencyKey detected`);
-        // If idempotency key is duplicate, try to fetch and return the existing offer
-        if (payload?.idempotencyKey) {
+      if (field === 'idempotencyKey' && payload?.idempotencyKey) {
+        this.logger.log(`[submitOfferPromotionRequest] Duplicate idempotencyKey detected, retrying with backoff...`);
+        
+        // Retry with exponential backoff to allow database to commit
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const delayMs = 100 * Math.pow(2, attempt); // 100ms, 200ms, 400ms
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          
           const existingOffer = await this.offerModel.findOne({ 
             idempotencyKey: payload.idempotencyKey,
             merchantId 
           }).lean().exec();
+          
           if (existingOffer) {
+            this.logger.log(`[submitOfferPromotionRequest] Found existing offer on attempt ${attempt + 1}: ${existingOffer.requestId}`);
             return existingOffer;
           }
         }
+        
+        this.logger.warn(`[submitOfferPromotionRequest] Could not find existing offer after retries for idempotencyKey: ${payload.idempotencyKey}`);
       }
-      throw new BadRequestException('Duplicate offer request. Please retry or use a different idempotency key.');
+      throw new BadRequestException('Duplicate offer request. Please try again.');
     }
 
     this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
