@@ -96,7 +96,11 @@ export class OffersService {
 
   async submitOfferPromotionRequest(merchantId: string, payload: any) {
     try {
-      this.logger.log(`[submitOfferPromotionRequest] merchantId=${merchantId}, payload keys=${Object.keys(payload).join(',')}`);
+      if (!payload || typeof payload !== 'object') {
+        throw new BadRequestException('Invalid offer payload');
+      }
+
+      this.logger.log(`[submitOfferPromotionRequest] merchantId=${merchantId}, payload keys=${Object.keys(payload || {}).join(',')}`);
       
       const merchant = await this.userModel.findById(merchantId).select('name email role accountType').lean().exec();
       if (!merchant) {
@@ -175,6 +179,14 @@ export class OffersService {
     await this.redisService.deleteByPattern(`golo:offers:merchant:${merchantId}:*`);
     return request;
   } catch (error) {
+    if (error?.name === 'ValidationError' || error?.name === 'CastError') {
+      throw new BadRequestException(error?.message || 'Invalid offer payload');
+    }
+
+    if (error?.code === 11000) {
+      throw new BadRequestException('Duplicate offer request. Please retry.');
+    }
+
     this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
     throw error;
   }

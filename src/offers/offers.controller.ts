@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -29,18 +30,27 @@ export class OffersController {
   @UseGuards(JwtAuthGuard)
   async submitOfferRequest(@Body() body: SubmitBannerPromotionDto, @CurrentUser() user: any) {
     try {
+      const userId = user?.id || user?.sub || user?._id;
+      if (!userId) {
+        throw new UnauthorizedException('Authentication required');
+      }
+
+      if (!body || typeof body !== 'object') {
+        throw new BadRequestException('Invalid request payload');
+      }
+
       const payload = { ...body } as any;
 
       if (!payload.title || !payload.category) {
         throw new BadRequestException('Offer title and category are required');
       }
 
-      const request = await this.offersService.submitOfferPromotionRequest(user.id, payload);
+      const request = await this.offersService.submitOfferPromotionRequest(String(userId), payload);
 
       try {
         await this.kafkaService?.emit(KAFKA_TOPICS.OFFER_PROMOTION_SUBMITTED, {
           requestId: request.requestId,
-          merchantId: user.id,
+          merchantId: String(userId),
           title: request.title,
           category: request.category,
           totalPrice: request.totalPrice,
