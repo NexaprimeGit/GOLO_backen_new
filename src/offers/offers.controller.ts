@@ -28,30 +28,37 @@ export class OffersController {
   @Post('request')
   @UseGuards(JwtAuthGuard)
   async submitOfferRequest(@Body() body: SubmitBannerPromotionDto, @CurrentUser() user: any) {
-    const payload = { ...body } as any;
-
-    if (!payload.title || !payload.category) {
-      throw new BadRequestException('Offer title and category are required');
-    }
-
-    const request = await this.offersService.submitOfferPromotionRequest(user.id, payload);
-
     try {
-      await this.kafkaService.emit(KAFKA_TOPICS.OFFER_PROMOTION_SUBMITTED, {
-        requestId: request.requestId,
-        merchantId: user.id,
-        title: request.title,
-        category: request.category,
-        totalPrice: request.totalPrice,
-      });
-    } catch {}
+      const payload = { ...body } as any;
 
-    return {
-      success: true,
-      message: 'Offer promotion request submitted for review',
-      data: request,
-      timestamp: new Date().toISOString(),
-    };
+      if (!payload.title || !payload.category) {
+        throw new BadRequestException('Offer title and category are required');
+      }
+
+      const request = await this.offersService.submitOfferPromotionRequest(user.id, payload);
+
+      try {
+        await this.kafkaService?.emit(KAFKA_TOPICS.OFFER_PROMOTION_SUBMITTED, {
+          requestId: request.requestId,
+          merchantId: user.id,
+          title: request.title,
+          category: request.category,
+          totalPrice: request.totalPrice,
+        });
+      } catch (kafkaError) {
+        console.error('[Offers] Kafka emit error:', kafkaError.message);
+      }
+
+      return {
+        success: true,
+        message: 'Offer promotion request submitted for review',
+        data: request,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('[Offers] Submit error:', error.message, error.stack);
+      throw error;
+    }
   }
 
   @Get('my')

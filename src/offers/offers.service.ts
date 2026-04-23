@@ -94,16 +94,28 @@ export class OffersService {
     return false;
   }
 
-  async submitOfferPromotionRequest(merchantId: string, payload: any) {
-    const merchant = await this.userModel.findById(merchantId).select('name email role accountType').lean().exec();
-    if (!merchant) throw new NotFoundException('Merchant not found');
-    if (merchant.role !== 'merchant' && merchant.accountType !== 'merchant') throw new BadRequestException('Only merchants can submit offers');
+async submitOfferPromotionRequest(merchantId: string, payload: any) {
+    try {
+      this.logger.log(`[submitOfferPromotionRequest] merchantId=${merchantId}, payload keys=${Object.keys(payload).join(',')}`);
+      
+      const merchant = await this.userModel.findById(merchantId).select('name email role accountType').lean().exec();
+      if (!merchant) {
+        this.logger.error(`[submitOfferPromotionRequest] Merchant not found: ${merchantId}`);
+        throw new NotFoundException('Merchant not found');
+      }
+      this.logger.log(`[submitOfferPromotionRequest] Merchant found: ${merchant.name}, role=${merchant.role}, accountType=${merchant.accountType}`);
+      
+      if (merchant.role !== 'merchant' && merchant.accountType !== 'merchant') {
+        throw new BadRequestException('Only merchants can submit offers');
+      }
 
-    const merchantProfile = await this.merchantModel.findOne({ userId: merchantId }).select('storeLocationLatitude storeLocationLongitude').lean().exec();
-    const latitude = Number(merchantProfile?.storeLocationLatitude);
-    const longitude = Number(merchantProfile?.storeLocationLongitude);
-    const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
-    if (!hasCoords) throw new BadRequestException('Store coordinates missing. Set store location before publishing offers.');
+      const merchantProfile = await this.merchantModel.findOne({ userId: merchantId }).select('storeLocationLatitude storeLocationLongitude').lean().exec();
+      this.logger.log(`[submitOfferPromotionRequest] Merchant profile: ${JSON.stringify(merchantProfile)}`);
+      
+      const latitude = Number(merchantProfile?.storeLocationLatitude);
+      const longitude = Number(merchantProfile?.storeLocationLongitude);
+      const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+      if (!hasCoords) throw new BadRequestException('Store coordinates missing. Set store location before publishing offers.');
 
     const normalizedDates = Array.isArray(payload.selectedDates) ? payload.selectedDates.map((d: any) => new Date(d)).filter((d: any) => !Number.isNaN(d.getTime())) : [];
     if (!normalizedDates.length) throw new BadRequestException('Please select at least one valid visibility date');
@@ -162,6 +174,10 @@ export class OffersService {
 
     await this.redisService.deleteByPattern(`golo:offers:merchant:${merchantId}:*`);
     return request;
+  } catch (error) {
+    this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
+    throw error;
+  }
   }
 
   async listMerchantOffers(merchantId: string) {
