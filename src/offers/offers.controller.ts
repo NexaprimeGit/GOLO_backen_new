@@ -11,7 +11,6 @@ import {
   BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { OffersService } from './offers.service';
@@ -44,11 +43,6 @@ export class OffersController {
 
       if (!payload.title || !payload.category) {
         throw new BadRequestException('Offer title and category are required');
-      }
-
-      // Generate idempotency key if not provided (prevents duplicate submissions)
-      if (!payload.idempotencyKey) {
-        payload.idempotencyKey = uuidv4();
       }
 
       const request = await this.offersService.submitOfferPromotionRequest(String(userId), payload);

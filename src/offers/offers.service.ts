@@ -132,19 +132,23 @@ export class OffersService {
     const platformFee = Number(payload.platformFee ?? (selectedDays > 0 ? 49 : 0));
     const computedTotal = dailyRate * selectedDays + platformFee;
 
-    // Check idempotency: if same idempotencyKey exists, return existing offer
-    const idempotencyKey = payload.idempotencyKey;
-    if (idempotencyKey) {
-      const existingOffer = await this.offerModel.findOne({ idempotencyKey, merchantId }).lean().exec();
-      if (existingOffer) {
-        this.logger.log(`[submitOfferPromotionRequest] Idempotent request: returning existing offer ${existingOffer.requestId}`);
-        return existingOffer;
-      }
+    // Idempotency: Always use provided key or generate a new one
+    const idempotencyKey = payload.idempotencyKey || uuidv4();
+    
+    // CRITICAL: Check if offer already exists with this idempotency key BEFORE attempting create
+    const existingOffer = await this.offerModel.findOne({ 
+      idempotencyKey, 
+      merchantId 
+    }).lean().exec();
+    
+    if (existingOffer) {
+      this.logger.log(`[submitOfferPromotionRequest] ✓ Idempotent request: returning existing offer ${existingOffer.requestId}`);
+      return existingOffer;
     }
 
     const request = await this.offerModel.create({
       requestId: uuidv4(),
-      idempotencyKey: idempotencyKey || undefined,
+      idempotencyKey,
       merchantId,
       merchantName: merchant.name || 'Merchant',
       merchantEmail: merchant.email || '-',
@@ -196,28 +200,14 @@ export class OffersService {
 
     if (error?.code === 11000) {
       const field = Object.keys(error?.keyPattern || {})[0] || 'unknown';
-      if (field === 'idempotencyKey' && payload?.idempotencyKey) {
-        this.logger.log(`[submitOfferPromotionRequest] Duplicate idempotencyKey detected, retrying with backoff...`);
-        
-        // Retry with exponential backoff to allow database to commit
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const delayMs = 100 * Math.pow(2, attempt); // 100ms, 200ms, 400ms
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          
-          const existingOffer = await this.offerModel.findOne({ 
-            idempotencyKey: payload.idempotencyKey,
-            merchantId 
-          }).lean().exec();
-          
-          if (existingOffer) {
-            this.logger.log(`[submitOfferPromotionRequest] Found existing offer on attempt ${attempt + 1}: ${existingOffer.requestId}`);
-            return existingOffer;
-          }
-        }
-        
-        this.logger.warn(`[submitOfferPromotionRequest] Could not find existing offer after retries for idempotencyKey: ${payload.idempotencyKey}`);
+      this.logger.warn(`[submitOfferPromotionRequest] E11000 Duplicate Key Error on field: ${field}`);
+      
+      // This should rarely happen now due to pre-check, but if it does, return a helpful message
+      if (field === 'idempotencyKey') {
+        throw new BadRequestException('Offer already submitted. Please refresh and try again.');
       }
-      throw new BadRequestException('Duplicate offer request. Please try again.');
+      
+      throw new BadRequestException('An offer with this data already exists. Please modify and resubmit.');
     }
 
     this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
