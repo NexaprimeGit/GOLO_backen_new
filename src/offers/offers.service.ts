@@ -132,8 +132,19 @@ export class OffersService {
     const platformFee = Number(payload.platformFee ?? (selectedDays > 0 ? 49 : 0));
     const computedTotal = dailyRate * selectedDays + platformFee;
 
+    // Check idempotency: if same idempotencyKey exists, return existing offer
+    const idempotencyKey = payload.idempotencyKey;
+    if (idempotencyKey) {
+      const existingOffer = await this.offerModel.findOne({ idempotencyKey, merchantId }).lean().exec();
+      if (existingOffer) {
+        this.logger.log(`[submitOfferPromotionRequest] Idempotent request: returning existing offer ${existingOffer.requestId}`);
+        return existingOffer;
+      }
+    }
+
     const request = await this.offerModel.create({
       requestId: uuidv4(),
+      idempotencyKey: idempotencyKey || undefined,
       merchantId,
       merchantName: merchant.name || 'Merchant',
       merchantEmail: merchant.email || '-',
@@ -184,7 +195,21 @@ export class OffersService {
     }
 
     if (error?.code === 11000) {
-      throw new BadRequestException('Duplicate offer request. Please retry.');
+      const field = Object.keys(error?.keyPattern || {})[0] || 'unknown';
+      if (field === 'idempotencyKey') {
+        this.logger.log(`[submitOfferPromotionRequest] Duplicate idempotencyKey detected`);
+        // If idempotency key is duplicate, try to fetch and return the existing offer
+        if (payload?.idempotencyKey) {
+          const existingOffer = await this.offerModel.findOne({ 
+            idempotencyKey: payload.idempotencyKey,
+            merchantId 
+          }).lean().exec();
+          if (existingOffer) {
+            return existingOffer;
+          }
+        }
+      }
+      throw new BadRequestException('Duplicate offer request. Please retry or use a different idempotency key.');
     }
 
     this.logger.error(`[submitOfferPromotionRequest] Error: ${error.message}`, error.stack);
