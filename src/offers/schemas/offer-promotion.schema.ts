@@ -21,9 +21,6 @@ export class OfferPromotion {
   @Prop({ required: true, unique: true, index: true })
   requestId: string;
 
-  @Prop({ unique: true, index: true, sparse: true })
-  idempotencyKey: string;
-
   @Prop({ required: true, index: true })
   merchantId: string;
 

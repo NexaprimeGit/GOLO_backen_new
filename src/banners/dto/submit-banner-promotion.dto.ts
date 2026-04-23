@@ -136,8 +136,4 @@ export class SubmitBannerPromotionDto {
   @ValidateNested({ each: true })
   @Type(() => OfferSelectedProductDto)
   selectedProducts?: OfferSelectedProductDto[];
-
-  @IsOptional()
-  @IsString()
-  idempotencyKey?: string;
 }
