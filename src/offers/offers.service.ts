@@ -13,6 +13,7 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 @Injectable()
 export class OffersService implements OnModuleInit {
   private readonly logger = new Logger(OffersService.name);
+  private staleOfferIndexRecoveryAttempted = false;
 
   constructor(
     @InjectModel(OfferPromotion.name) private readonly offerModel: Model<OfferPromotionDocument>,
@@ -165,6 +166,40 @@ export class OffersService implements OnModuleInit {
     }
   }
 
+  private async recoverFromDuplicateOfferIndex(error: any): Promise<boolean> {
+    if (this.staleOfferIndexRecoveryAttempted) return false;
+
+    const message = String(error?.message || '');
+    const isDuplicate = Number(error?.code) === 11000 || /E11000/i.test(message);
+    if (!isDuplicate) return false;
+
+    // Some deployments still contain a legacy unique index on idempotencyKey,
+    // which rejects inserts where that field is absent/null.
+    const mentionsStaleIndex = /idempotencyKey/i.test(message) || /dup key/i.test(message);
+    if (!mentionsStaleIndex) return false;
+
+    this.staleOfferIndexRecoveryAttempted = true;
+
+    try {
+      const indexes = await this.offerModel.collection.indexes();
+      const staleIndexes = indexes.filter((idx: any) =>
+        Object.prototype.hasOwnProperty.call(idx?.key || {}, 'idempotencyKey'),
+      );
+
+      for (const indexDef of staleIndexes) {
+        const indexName = indexDef?.name;
+        if (!indexName) continue;
+        await this.offerModel.collection.dropIndex(indexName);
+        this.logger.warn(`[Offers] Dropped stale duplicate-causing index during write: ${indexName}`);
+      }
+
+      return staleIndexes.length > 0;
+    } catch (dropError) {
+      this.logger.error(`[Offers] Failed to recover stale index: ${dropError?.message || 'unknown error'}`);
+      return false;
+    }
+  }
+
   async submitOfferPromotionRequest(merchantId: string, payload: any) {
     try {
       if (!payload || typeof payload !== 'object') {
@@ -203,7 +238,7 @@ export class OffersService implements OnModuleInit {
     const platformFee = Number(payload.platformFee ?? (selectedDays > 0 ? 49 : 0));
     const computedTotal = dailyRate * selectedDays + platformFee;
 
-    const request = await this.offerModel.create({
+    const requestDocument = {
       requestId: uuidv4(),
       merchantId,
       merchantName: merchant.name || 'Merchant',
@@ -231,7 +266,16 @@ export class OffersService implements OnModuleInit {
       status: OfferPromotionStatus.UNDER_REVIEW,
       paymentStatus: OfferPaymentStatus.PENDING,
       isActive: false,
-    });
+    };
+
+    let request;
+    try {
+      request = await this.offerModel.create(requestDocument);
+    } catch (createError) {
+      const recovered = await this.recoverFromDuplicateOfferIndex(createError);
+      if (!recovered) throw createError;
+      request = await this.offerModel.create(requestDocument);
+    }
 
     if (this.kafkaService) {
       try {
