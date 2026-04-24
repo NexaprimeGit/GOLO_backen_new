@@ -45,13 +45,27 @@ export enum PromotionTypeDto {
 }
 
 export class SubmitBannerPromotionDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  bannerTitle: string;
+  bannerTitle?: string;
 
+  // Accept new API alias `title` as optional to support offers API
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  bannerCategory: string;
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  bannerCategory?: string;
+
+  // Accept new API alias `category` as optional to support offers API
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @IsOptional()
   @IsEnum(PromotionTypeDto)

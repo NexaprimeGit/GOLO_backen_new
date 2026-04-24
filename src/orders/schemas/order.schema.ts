@@ -38,8 +38,13 @@ export class Order {
 
   @Prop({ type: Date })
   completedAt?: Date;
+
+  // Link to the voucher that created this order
+  @Prop({ index: true })
+  voucherId?: string;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ merchantId: 1, status: 1, placedAt: -1 });
 OrderSchema.index({ merchantId: 1, placedAt: -1 });
+OrderSchema.index({ voucherId: 1 });

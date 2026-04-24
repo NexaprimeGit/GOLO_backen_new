@@ -4,18 +4,24 @@ import { VouchersController } from './vouchers.controller';
 import { VouchersService } from './vouchers.service';
 import { Voucher, VoucherSchema } from './schemas/voucher.schema';
 import { BannerPromotion, BannerPromotionSchema } from '../banners/schemas/banner-promotion.schema';
+import { OfferPromotion, OfferPromotionSchema } from '../offers/schemas/offer-promotion.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
 import { KafkaModule } from '../kafka/kafka.module';
 import { VouchersKafkaController } from './vouchers.kafka.controller';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Voucher.name, schema: VoucherSchema },
       { name: BannerPromotion.name, schema: BannerPromotionSchema },
+      { name: OfferPromotion.name, schema: OfferPromotionSchema },
       { name: User.name, schema: UserSchema },
+      { name: Merchant.name, schema: MerchantSchema },
     ]),
     forwardRef(() => KafkaModule),
+    OrdersModule,
   ],
   controllers: [VouchersController, VouchersKafkaController],
   providers: [VouchersService],

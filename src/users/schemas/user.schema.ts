@@ -43,7 +43,8 @@ export class User {
       state: String,
       pincode: String,
       avatar: String,
-      bio: String
+      bio: String,
+      interests: [String]
     }
   })
   profile: {
@@ -54,7 +55,11 @@ export class User {
     pincode?: string;
     avatar?: string;
     bio?: string;
+    interests?: string[];
   };
+
+  @Prop({ type: String })
+  profilePhoto?: string;
 
   @Prop({ type: Object })
   metadata: {

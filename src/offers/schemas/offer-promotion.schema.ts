@@ -1,9 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
-export type BannerPromotionDocument = BannerPromotion & Document;
-
-export enum BannerPromotionStatus {
+export enum OfferPromotionStatus {
   UNDER_REVIEW = 'under_review',
   APPROVED = 'approved',
   REJECTED = 'rejected',
@@ -11,18 +9,15 @@ export enum BannerPromotionStatus {
   EXPIRED = 'expired',
 }
 
-export enum BannerPaymentStatus {
+export enum OfferPaymentStatus {
   PENDING = 'pending',
   PAID = 'paid',
 }
 
-export enum BannerPromotionType {
-  BANNER = 'banner',
-  OFFER = 'offer',
-}
+export type OfferPromotionDocument = OfferPromotion & Document;
 
-@Schema({ timestamps: true, collection: 'banner_promotions' })
-export class BannerPromotion {
+@Schema({ timestamps: true, collection: 'offers' })
+export class OfferPromotion {
   @Prop({ required: true, unique: true, index: true })
   requestId: string;
 
@@ -36,22 +31,16 @@ export class BannerPromotion {
   merchantEmail: string;
 
   @Prop({ required: true })
-  bannerTitle: string;
+  title: string;
 
   @Prop({ required: true })
-  bannerCategory: string;
+  category: string;
 
   @Prop({ default: '' })
   description: string;
 
-  @Prop({ enum: BannerPromotionType, default: BannerPromotionType.BANNER, index: true })
-  promotionType: BannerPromotionType;
-
   @Prop({})
   imageUrl: string;
-
-  @Prop({ default: '1920 x 520 px' })
-  recommendedSize: string;
 
   @Prop({ type: [Date], required: true, default: [] })
   selectedDates: Date[];
@@ -108,20 +97,13 @@ export class BannerPromotion {
     ],
     default: [],
   })
-  selectedProducts: Array<{
-    productId: string;
-    productName: string;
-    imageUrl?: string;
-    originalPrice: number;
-    offerPrice: number;
-    stockQuantity?: number;
-  }>;
+  selectedProducts: Array<any>;
 
-  @Prop({ enum: BannerPromotionStatus, default: BannerPromotionStatus.UNDER_REVIEW, index: true })
-  status: BannerPromotionStatus;
+  @Prop({ enum: OfferPromotionStatus, default: OfferPromotionStatus.UNDER_REVIEW, index: true })
+  status: OfferPromotionStatus;
 
-  @Prop({ enum: BannerPaymentStatus, default: BannerPaymentStatus.PENDING })
-  paymentStatus: BannerPaymentStatus;
+  @Prop({ enum: OfferPaymentStatus, default: OfferPaymentStatus.PENDING })
+  paymentStatus: OfferPaymentStatus;
 
   @Prop()
   adminNotes?: string;
@@ -139,7 +121,7 @@ export class BannerPromotion {
   paymentReference?: string;
 
   @Prop({ default: false })
-  isHomepageVisible: boolean;
+  isActive: boolean;
 
   @Prop()
   createdAt: Date;
@@ -148,8 +130,5 @@ export class BannerPromotion {
   updatedAt: Date;
 }
 
-export const BannerPromotionSchema = SchemaFactory.createForClass(BannerPromotion);
-
-BannerPromotionSchema.index({ merchantId: 1, createdAt: -1 });
-BannerPromotionSchema.index({ merchantId: 1, promotionType: 1, createdAt: -1 });
-BannerPromotionSchema.index({ status: 1, paymentStatus: 1, startDate: 1, endDate: 1 });
+export const OfferPromotionSchema = SchemaFactory.createForClass(OfferPromotion);
+OfferPromotionSchema.index({ merchantId: 1, createdAt: -1 });

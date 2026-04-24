@@ -26,12 +26,20 @@ interface CurrentUserPayload {
 }
 
 @Controller('merchant/products')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.MERCHANT, UserRole.ADMIN)
 export class MerchantProductsController {
   constructor(private readonly merchantProductsService: MerchantProductsService) {}
 
+  @Get('public/:merchantId')
+  async listPublic(
+    @Param('merchantId') merchantId: string,
+    @Query() query: ListMerchantProductsDto,
+  ) {
+    return this.merchantProductsService.listProductsByMerchantId(merchantId, query);
+  }
+
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   async create(
     @CurrentUser() user: CurrentUserPayload,
     @Body() dto: CreateMerchantProductDto,
@@ -40,6 +48,8 @@ export class MerchantProductsController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   async list(
     @CurrentUser() user: CurrentUserPayload,
     @Query() query: ListMerchantProductsDto,
@@ -48,6 +58,8 @@ export class MerchantProductsController {
   }
 
   @Get(':productId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   async getOne(
     @CurrentUser() user: CurrentUserPayload,
     @Param('productId') productId: string,
@@ -56,6 +68,8 @@ export class MerchantProductsController {
   }
 
   @Put(':productId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   async updateOne(
     @CurrentUser() user: CurrentUserPayload,
     @Param('productId') productId: string,
@@ -65,6 +79,8 @@ export class MerchantProductsController {
   }
 
   @Delete(':productId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MERCHANT, UserRole.ADMIN)
   async deleteOne(
     @CurrentUser() user: CurrentUserPayload,
     @Param('productId') productId: string,

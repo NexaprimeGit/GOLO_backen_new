@@ -3,11 +3,13 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { MerchantsService } from './merchants.service';
 import { MerchantsController } from './merchants.controller';
 import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
+import { User, UserSchema } from '../users/schemas/user.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Merchant.name, schema: MerchantSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   controllers: [MerchantsController],

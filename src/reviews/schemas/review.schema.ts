@@ -1,7 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type ReviewDocument = Review & Document;
+export type ReviewDocument = Review &
+  Document & {
+    createdAt: Date;
+    updatedAt: Date;
+  };
 
 export enum ReviewStatus {
   APPROVED = 'approved',
@@ -14,6 +18,12 @@ export enum ReviewStatus {
 export class Review {
   @Prop({ required: true, index: true })
   merchantId: Types.ObjectId;
+
+  @Prop({ required: true, index: true })
+  offerId: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, index: true })
+  voucherId: Types.ObjectId;
 
   @Prop({ required: true, index: true })
   userId: Types.ObjectId;
@@ -32,5 +42,7 @@ export class Review {
 }
 
 export const ReviewSchema = SchemaFactory.createForClass(Review);
+ReviewSchema.index({ offerId: 1, status: 1, createdAt: -1 });
+ReviewSchema.index({ offerId: 1, createdAt: -1 });
 ReviewSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
 ReviewSchema.index({ merchantId: 1, createdAt: -1 });

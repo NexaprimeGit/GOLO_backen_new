@@ -71,6 +71,11 @@ export class VouchersController {
     );
   }
 
+  @Get('public/:voucherId/status')
+  async getPublicVoucherStatus(@Param('voucherId') voucherId: string) {
+    return await this.vouchersService.getPublicVoucherStatus(voucherId);
+  }
+
   /**
    * GET /vouchers/:voucherId
    * Get single voucher details by ID

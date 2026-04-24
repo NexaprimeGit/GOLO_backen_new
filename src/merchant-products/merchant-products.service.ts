@@ -162,6 +162,42 @@ export class MerchantProductsService implements OnModuleInit {
     return response;
   }
 
+  async listProductsByMerchantId(merchantId: string, query: ListMerchantProductsDto) {
+    const page = Number(query.page) || 1;
+    const limit = Number(query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const filter: FilterQuery<MerchantProductDocument> = { merchantId };
+
+    if (query.search?.trim()) {
+      const searchRegex = new RegExp(query.search.trim(), 'i');
+      filter.$or = [{ name: searchRegex }, { category: searchRegex }];
+    }
+
+    const [products, total] = await Promise.all([
+      this.merchantProductModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.merchantProductModel.countDocuments(filter),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        products: products.map((product) => this.mapProduct(product)),
+      },
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
   async getProduct(merchantId: string, productId: string) {
     const cacheKey = this.cacheItemKey(merchantId, productId);
     const cached = await this.redisService.get<any>(cacheKey);

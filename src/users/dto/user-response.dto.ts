@@ -8,6 +8,7 @@ export class UserResponseDto {
   banReason?: string;
   isEmailVerified: boolean;
   profile?: any;
+  profilePhoto?: string | null;
   merchantProfile?: any;
   iWantPreference?: {
     category?: string;

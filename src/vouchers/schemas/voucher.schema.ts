@@ -27,6 +27,9 @@ export class Voucher {
   @Prop({ required: false })
   verificationCode?: string; // Manual verification code - "GKV8-5DKE-JVED"
 
+  @Prop({ type: String, default: null })
+  qrImage?: string;
+
   @Prop({ required: true, index: true })
   merchantId: Types.ObjectId; // FK to Merchant/User
 

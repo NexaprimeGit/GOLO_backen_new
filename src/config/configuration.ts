@@ -45,7 +45,7 @@ export default registerAs('config', () => ({
   },
 
   redis: {
-    enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
+    enabled: parseBoolean(process.env.ENABLE_REDIS ?? 'false'),
     host: process.env.REDIS_HOST || '127.0.0.1',
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
     password: process.env.REDIS_PASSWORD || undefined,

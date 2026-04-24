@@ -52,6 +52,10 @@ export class UpdateBannerPromotionDto {
 
   @IsOptional()
   @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
   @Matches(/^(https?:\/\/|data:image\/[a-zA-Z0-9.+-]+;base64,)/, {
     message: 'imageUrl must be a URL address or uploaded image data',
   })

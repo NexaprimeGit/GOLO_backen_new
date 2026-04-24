@@ -1,15 +1,36 @@
-import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ReviewsService } from './reviews.service';
 import { ReviewStatus } from './schemas/review.schema';
 
 @Controller('reviews')
-@UseGuards(JwtAuthGuard)
 export class ReviewsController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
+  @Get('offers/:offerId')
+  async getOfferReviews(
+    @Param('offerId') offerId: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+  ) {
+    return this.reviewsService.getOfferReviews(offerId, Number(page), Number(limit));
+  }
+
+  @Post('vouchers/:voucherId')
+  @UseGuards(JwtAuthGuard)
+  async submitOfferReview(
+    @CurrentUser() user: any,
+    @Param('voucherId') voucherId: string,
+    @Body('rating') rating: number,
+    @Body('content') content: string,
+  ) {
+    const userId = user?.id || user?._id;
+    return this.reviewsService.submitOfferReview(userId, voucherId, { rating, content });
+  }
+
   @Get('merchant')
+  @UseGuards(JwtAuthGuard)
   async getMerchantReviews(
     @CurrentUser() user: any,
     @Query('page') page = '1',
@@ -22,12 +43,14 @@ export class ReviewsController {
   }
 
   @Get('merchant/stats')
+  @UseGuards(JwtAuthGuard)
   async getMerchantReviewStats(@CurrentUser() user: any) {
     const merchantId = user?.id || user?._id;
     return this.reviewsService.getMerchantReviewStats(merchantId);
   }
 
   @Patch(':reviewId/status')
+  @UseGuards(JwtAuthGuard)
   async updateReviewStatus(
     @CurrentUser() user: any,
     @Param('reviewId') reviewId: string,
