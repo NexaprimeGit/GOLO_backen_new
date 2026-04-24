@@ -147,6 +147,18 @@ export class OffersController {
     return { success: true, message: 'Offer template cleared successfully', data, timestamp: new Date().toISOString() };
   }
 
+  // Liked products endpoint for merchant analytics
+  @Get('merchant/liked-products')
+  @UseGuards(JwtAuthGuard)
+  async getMerchantLikedProducts(@CurrentUser() user: any, @Query('limit') limit?: string) {
+    const safeLimit = Number(limit) || 10;
+    if (!user?.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    const data = await this.offersService.getMerchantLikedOffers(user.id, safeLimit);
+    return { success: true, data, timestamp: new Date().toISOString() };
+  }
+
   @Get(':offerId')
   async getPublicOfferDetails(@Param('offerId') offerId: string) {
     const data = await this.offersService.getPublicOfferDetails(offerId);

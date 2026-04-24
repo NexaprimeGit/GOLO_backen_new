@@ -11,6 +11,7 @@ import {
 import { OfferPromotionDocument, OfferPromotionStatus } from '../offers/schemas/offer-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
 import { MerchantDocument } from '../users/schemas/merchant.schema';
+import { OrdersService } from '../orders/orders.service';
 
 @Injectable()
 export class VouchersService implements OnModuleInit {
@@ -31,6 +32,7 @@ export class VouchersService implements OnModuleInit {
     private offerModel: Model<OfferPromotionDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
+    private ordersService: OrdersService,
   ) {}
 
   async onModuleInit() {
@@ -313,6 +315,28 @@ if (!offerResult) {
         expiresAt,
         validityHours: 720, // 30 days
       });
+
+      // Create an order for the merchant when voucher is claimed
+      try {
+        const orderAmount = offer.totalPrice || 0;
+        
+        // Get merchant profile to find the correct userId for the order
+        // The offer's merchantId might be the profile ID, but orders are filtered by user ID from JWT
+        const merchantProfile = await this.merchantModel.findById(merchantId).select('userId').lean().exec();
+        const orderMerchantId = merchantProfile?.userId || String(merchantId);
+        
+        await this.ordersService.createOrder(
+          userId,
+          orderMerchantId,
+          orderAmount,
+          1, // itemsCount
+          voucher.voucherId, // Link order to voucher
+        );
+        this.logger.log(`Order created for voucher claim: ${voucher.voucherId}`);
+      } catch (orderError) {
+        // Log error but don't fail the voucher claim
+        this.logger.error(`Failed to create order for voucher claim: ${orderError.message}`);
+      }
 
       return {
         success: true,

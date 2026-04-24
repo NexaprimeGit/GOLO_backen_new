@@ -9,6 +9,7 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
 import { KafkaModule } from '../kafka/kafka.module';
 import { VouchersKafkaController } from './vouchers.kafka.controller';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { VouchersKafkaController } from './vouchers.kafka.controller';
       { name: Merchant.name, schema: MerchantSchema },
     ]),
     forwardRef(() => KafkaModule),
+    OrdersModule,
   ],
   controllers: [VouchersController, VouchersKafkaController],
   providers: [VouchersService],

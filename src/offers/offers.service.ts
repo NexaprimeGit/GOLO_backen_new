@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, isValidObjectId } from 'mongoose';
+import { Model, isValidObjectId, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { KafkaService } from '../kafka/kafka.service';
 import { RedisService } from '../common/services/redis.service';
@@ -37,6 +37,58 @@ export class OffersService implements OnModuleInit {
     'combo',
     'clearance',
   ]);
+
+  /**
+   * Get merchant's offers sorted by likes/wishlist count
+   * Used for analytics "Product Liked" section
+   * Returns customer details for each like
+   */
+  async getMerchantLikedOffers(merchantId: string, limit = 10): Promise<any[]> {
+    this.logger.log(`Getting liked offers for merchant: ${merchantId}`);
+
+    // Get all approved and active offers for this merchant
+    const offers = await this.offerModel.find({
+      merchantId: merchantId,
+      status: { $in: [OfferPromotionStatus.APPROVED, OfferPromotionStatus.ACTIVE] },
+    }).lean().exec();
+
+    this.logger.log(`Found ${offers?.length || 0} approved/active offers for merchant ${merchantId}`);
+
+    if (!offers || offers.length === 0) {
+      return [];
+    }
+
+    // Get wishlist details for each offer (which users liked it)
+    const offersWithLikes = await Promise.all(
+      offers.map(async (offer) => {
+        const offerId = (offer as any).requestId?.toString() || '';
+        
+        // Find users who liked this offer
+        const usersWhoLiked = await this.userModel.find({
+          wishlist: { $in: [offerId] },
+        }).select('name email').lean().exec();
+
+        const customerNames = usersWhoLiked.map(u => u.name || 'Anonymous').join(', ');
+        
+        this.logger.log(`Offer ${offer.title}: ${usersWhoLiked.length} likes - Customers: ${customerNames}`);
+
+        return {
+          name: offer.title || 'Untitled Offer',
+          type: offer.category || 'General',
+          likes: usersWhoLiked.length,
+          image: (offer as any).imageUrl || '',
+          offerId: offerId,
+          customers: customerNames || 'No customers yet',
+          customerCount: usersWhoLiked.length,
+        };
+      })
+    );
+
+    // Sort by likes count descending and limit
+    return offersWithLikes
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, limit);
+  }
 
   private toRadians(value: number): number {
     return (value * Math.PI) / 180;
