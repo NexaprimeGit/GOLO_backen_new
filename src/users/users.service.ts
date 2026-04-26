@@ -1449,6 +1449,13 @@ export class UsersService implements OnModuleInit {
       ? UserRole.ADMIN
       : (user.accountType === 'merchant' ? UserRole.MERCHANT : user.role || UserRole.USER);
 
+    // Loyalty tier logic
+    const points = user.loyaltyPoints || 0;
+    let loyaltyTier = 'Bronze';
+    if (points >= 20000) loyaltyTier = 'Platinum';
+    else if (points >= 5000) loyaltyTier = 'Gold';
+    else if (points >= 1000) loyaltyTier = 'Silver';
+
     return {
       id: user._id.toString(),
       name: user.name,
@@ -1463,6 +1470,9 @@ export class UsersService implements OnModuleInit {
       merchantProfile,
       iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,
+      loyaltyPoints: user.loyaltyPoints || 0,
+      merchantLoyaltyPoints: user.merchantLoyaltyPoints || {},
+      loyaltyTier,
     };
   }
 }

@@ -18,7 +18,12 @@ export class UserResponseDto {
     updatedAt?: Date;
   } | null;
   createdAt: Date;
-  
+
+  // Loyalty fields
+  loyaltyPoints?: number;
+  merchantLoyaltyPoints?: { [merchantId: string]: number };
+  loyaltyTier?: string;
+
   constructor(partial: Partial<UserResponseDto>) {
     Object.assign(this, partial);
   }

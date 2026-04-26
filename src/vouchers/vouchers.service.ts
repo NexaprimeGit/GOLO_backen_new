@@ -862,8 +862,44 @@ if (!offerResult) {
       voucher.redemptionCode = redemptionCode;
       await voucher.save();
 
-      // Get user details
-      const user = await this.userModel.findById(voucher.userId).select('name email');
+      // Fetch offer to get loyaltyPointsPerPurchase
+      let loyaltyPoints = 0;
+      let offerMerchantId = null;
+      // Try OfferPromotion first
+      const offer = await this.offerModel.findById(voucher.offerId).lean();
+      if (offer && offer.loyaltyRewardEnabled && offer.loyaltyPointsPerPurchase) {
+        loyaltyPoints = Number(offer.loyaltyPointsPerPurchase) || 0;
+        offerMerchantId = offer.merchantId;
+      } else {
+        // Fallback: Try BannerPromotion if not found in OfferPromotion
+        const banner = await this.bannerModel.findById(voucher.offerId).lean();
+        if (
+          banner &&
+          banner.loyaltyRewardEnabled &&
+          banner.loyaltyStarsPerPurchase &&
+          banner.loyaltyScorePerStar
+        ) {
+          loyaltyPoints = Number(banner.loyaltyStarsPerPurchase) * Number(banner.loyaltyScorePerStar) || 0;
+          offerMerchantId = banner.merchantId;
+        }
+      }
+
+      // Credit points to user
+      if (loyaltyPoints > 0) {
+        const user = await this.userModel.findById(voucher.userId);
+        if (user) {
+          // Add to total points
+          user.loyaltyPoints = (user.loyaltyPoints || 0) + loyaltyPoints;
+          // Add to per-merchant points
+          const merchantIdStr = String(offerMerchantId || voucher.merchantId);
+          if (!user.merchantLoyaltyPoints) user.merchantLoyaltyPoints = {};
+          user.merchantLoyaltyPoints[merchantIdStr] = (user.merchantLoyaltyPoints[merchantIdStr] || 0) + loyaltyPoints;
+          await user.save();
+        }
+      }
+
+      // Get user details (after update)
+      const user = await this.userModel.findById(voucher.userId).select('name email loyaltyPoints merchantLoyaltyPoints');
 
       return {
         success: true,
@@ -875,6 +911,9 @@ if (!offerResult) {
           discount: voucher.discount,
           redeemedAt: voucher.redeemedAt,
           redemptionCode: redemptionCode,
+          loyaltyPointsCredited: loyaltyPoints,
+          userTotalPoints: user?.loyaltyPoints || 0,
+          merchantPoints: user?.merchantLoyaltyPoints || {},
         },
       };
     } catch (error) {

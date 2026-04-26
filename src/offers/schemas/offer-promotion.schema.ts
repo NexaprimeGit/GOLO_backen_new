@@ -72,8 +72,12 @@ export class OfferPromotion {
   @Prop({ default: 1 })
   loyaltyStarsPerPurchase: number;
 
-  @Prop({ default: 10 })
+    @Prop({ default: 10 }) 
   loyaltyScorePerStar: number;
+
+    // New: Points per purchase set by merchant
+    @Prop({ default: 0 })
+    loyaltyPointsPerPurchase: number;
 
   @Prop({ default: '' })
   promotionExpiryText: string;

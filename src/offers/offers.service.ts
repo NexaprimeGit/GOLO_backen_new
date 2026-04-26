@@ -224,6 +224,7 @@ export class OffersService implements OnModuleInit {
       loyaltyStarsToOffer: Number(payload.loyaltyStarsToOffer || 0),
       loyaltyStarsPerPurchase: Number(payload.loyaltyStarsPerPurchase || 1),
       loyaltyScorePerStar: Number(payload.loyaltyScorePerStar || 10),
+        loyaltyPointsPerPurchase: Number(payload.loyaltyPointsPerPurchase || 0), // New field
       promotionExpiryText: payload.promotionExpiryText || '',
       termsAndConditions: payload.termsAndConditions || '',
       exampleUsage: payload.exampleUsage || '',

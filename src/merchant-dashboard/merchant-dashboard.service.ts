@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+  import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Ad, AdDocument } from '../ads/schemas/category-schemas/ad.schema';
@@ -287,6 +287,33 @@ export class MerchantDashboardService {
         events: events.data,
         trend: trend.data,
       },
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // Get leaderboard of top customers by loyalty points for this merchant
+  async getLoyaltyLeaderboard(merchantId: string, limit = 10) {
+    // Find users with points for this merchant
+    const key = `merchantLoyaltyPoints.${merchantId}`;
+    const users = await this.userModel.find({
+      [key]: { $gt: 0 }
+    })
+      .sort({ [key]: -1 })
+      .limit(limit)
+      .select('name email profile loyaltyPoints merchantLoyaltyPoints')
+      .lean();
+
+    const leaderboard = users.map(u => ({
+      name: u.name,
+      email: u.email,
+      profilePhoto: u.profile?.avatar || u.profilePhoto || null,
+      points: u.merchantLoyaltyPoints?.[merchantId] || 0,
+      totalPoints: u.loyaltyPoints || 0,
+    }));
+
+    return {
+      success: true,
+      data: leaderboard,
       updatedAt: new Date().toISOString(),
     };
   }
