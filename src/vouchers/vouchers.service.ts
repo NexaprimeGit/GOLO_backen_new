@@ -11,6 +11,7 @@ import {
 import { OfferPromotionDocument, OfferPromotionStatus } from '../offers/schemas/offer-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
 import { MerchantDocument } from '../users/schemas/merchant.schema';
+import { MerchantProduct, MerchantProductDocument } from '../merchant-products/schemas/merchant-product.schema';
 import { OrdersService } from '../orders/orders.service';
 
 @Injectable()
@@ -24,6 +25,12 @@ export class VouchersService implements OnModuleInit {
     'clearance',
   ]);
 
+  private deriveProductStatus(stockQuantity: number): 'In Stock' | 'Low Stock' | 'Out of Stock' {
+    if (stockQuantity <= 0) return 'Out of Stock';
+    if (stockQuantity <= 10) return 'Low Stock';
+    return 'In Stock';
+  }
+
   constructor(
     @InjectModel('Voucher') private voucherModel: Model<VoucherDocument>,
     @InjectModel('BannerPromotion')
@@ -32,6 +39,7 @@ export class VouchersService implements OnModuleInit {
     private offerModel: Model<OfferPromotionDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
+    @InjectModel(MerchantProduct.name) private merchantProductModel: Model<MerchantProductDocument>,
     private ordersService: OrdersService,
   ) {}
 
@@ -251,11 +259,10 @@ if (!offerResult) {
       const offer = offerResult.offer;
       const isFromOfferCollection = offerResult.source === 'offer';
 
-      // Check if voucher already claimed for this offer
+      // Check if voucher already claimed for this offer (any status - one claim per user per offer forever)
       const existingVoucher = await this.voucherModel.findOne({
         userId: new Types.ObjectId(userId),
         offerId: new Types.ObjectId(offerId),
-        status: { $in: [VoucherStatus.ACTIVE, VoucherStatus.CLAIMED] },
       });
 
       if (existingVoucher) {
@@ -861,6 +868,59 @@ if (!offerResult) {
       voucher.redeemedByMerchantId = new Types.ObjectId(actualMerchantId);
       voucher.redemptionCode = redemptionCode;
       await voucher.save();
+
+      // ── Auto-decrement stock for every product linked to the offer ──────────
+      try {
+        const offerId = String(voucher.offerId);
+
+        // Fetch selectedProducts from OfferPromotion first, then BannerPromotion
+        let selectedProducts: Array<{ productId?: string }> = [];
+
+        const offerDoc = await this.offerModel
+          .findById(offerId)
+          .select('selectedProducts')
+          .lean()
+          .exec();
+
+        if (offerDoc?.selectedProducts?.length) {
+          selectedProducts = offerDoc.selectedProducts as Array<{ productId?: string }>;
+        } else {
+          const bannerDoc = await this.bannerModel
+            .findById(offerId)
+            .select('selectedProducts')
+            .lean()
+            .exec();
+          if (bannerDoc?.selectedProducts?.length) {
+            selectedProducts = bannerDoc.selectedProducts as Array<{ productId?: string }>;
+          }
+        }
+
+        for (const item of selectedProducts) {
+          const pid = item?.productId;
+          if (!pid || !isValidObjectId(pid)) continue;
+
+          // Atomically decrement stockQuantity (floor at 0) and refresh status
+          const updated = await this.merchantProductModel
+            .findOneAndUpdate(
+              { _id: pid, stockQuantity: { $gt: 0 } },
+              { $inc: { stockQuantity: -1 } },
+              { new: true },
+            )
+            .exec();
+
+          if (updated) {
+            updated.status = this.deriveProductStatus(updated.stockQuantity);
+            await updated.save();
+            this.logger.log(
+              `Stock decremented for product ${pid}: ${updated.stockQuantity + 1} → ${updated.stockQuantity} (${updated.status})`,
+            );
+          }
+        }
+      } catch (stockError) {
+        // Never fail the redemption due to stock sync errors — log and continue
+        this.logger.error(`Failed to decrement stock after redemption: ${stockError.message}`);
+      }
+      // ────────────────────────────────────────────────────────────────────────
 
       // Get user details
       const user = await this.userModel.findById(voucher.userId).select('name email');

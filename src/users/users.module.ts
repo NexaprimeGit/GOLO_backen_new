@@ -9,6 +9,8 @@ import { User, UserSchema } from './schemas/user.schema';
 import { Notification, NotificationSchema } from './schemas/notification.schema';
 import { Merchant, MerchantSchema } from './schemas/merchant.schema';
 import { UserReport, UserReportSchema } from './schemas/user-report.schema';
+import { OfferLikeHistory, OfferLikeHistorySchema } from '../offers/schemas/offer-like-history.schema';
+import { OfferPromotion, OfferPromotionSchema } from '../offers/schemas/offer-promotion.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { KafkaModule } from '../kafka/kafka.module';
 import { AdsModule } from '../ads/ads.module';
@@ -23,6 +25,8 @@ import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
       { name: 'PendingMerchantLocation', schema: require('./schemas/pending-merchant-location.schema').PendingMerchantLocationSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: UserReport.name, schema: UserReportSchema },
+      { name: OfferLikeHistory.name, schema: OfferLikeHistorySchema },
+      { name: OfferPromotion.name, schema: OfferPromotionSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

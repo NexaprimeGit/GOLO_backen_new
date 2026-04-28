@@ -2,7 +2,7 @@
 
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
@@ -20,6 +20,8 @@ import * as nodemailer from 'nodemailer';
 import { AdsService } from '../ads/ads.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
+import { OfferLikeHistory, OfferLikeHistoryDocument } from '../offers/schemas/offer-like-history.schema';
+import { OfferPromotion, OfferPromotionDocument } from '../offers/schemas/offer-promotion.schema';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -71,6 +73,8 @@ export class UsersService implements OnModuleInit {
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
     @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
     @Optional() @InjectModel('PendingMerchantLocation') private pendingLocationModel?: Model<any>,
+    @Optional() @InjectModel(OfferLikeHistory.name) private offerLikeHistoryModel?: Model<OfferLikeHistoryDocument>,
+    @Optional() @InjectModel(OfferPromotion.name) private offerPromotionModel?: Model<OfferPromotionDocument>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
@@ -1099,6 +1103,15 @@ export class UsersService implements OnModuleInit {
 
     await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
 
+    // Persist lifetime like history in DB for merchant analytics.
+    if (added) {
+      try {
+        await this.upsertOfferLikeHistory(userId, user.name || 'Anonymous', adId);
+      } catch (historyError: any) {
+        this.logger.warn(`Failed to store offer lifetime like history: ${historyError?.message || 'unknown error'}`);
+      }
+    }
+
     // Create notification for the ad owner when someone adds to wishlist
     if (added && this.adsService) {
       try {
@@ -1122,6 +1135,100 @@ export class UsersService implements OnModuleInit {
     }
 
     return { wishlist, added };
+  }
+
+  private async upsertOfferLikeHistory(
+    userId: string,
+    userName: string,
+    offerId: string,
+    likedProduct?: any,
+  ): Promise<void> {
+    if (!this.offerLikeHistoryModel || !this.offerPromotionModel || !offerId) return;
+
+    const query: any = { requestId: offerId };
+    if (isValidObjectId(offerId)) {
+      query.$or = [{ _id: offerId }, { requestId: offerId }];
+      delete query.requestId;
+    }
+
+    const offer = await this.offerPromotionModel
+      .findOne(query)
+      .select('_id requestId merchantId title category selectedProducts')
+      .lean()
+      .exec();
+
+    if (!offer) return;
+
+    const baseProducts = Array.isArray((offer as any).selectedProducts) ? (offer as any).selectedProducts : [];
+    const mergedProducts = [...baseProducts];
+    if (likedProduct && (likedProduct.productId || likedProduct.id || likedProduct.productName || likedProduct.name)) {
+      const candidateId = String(likedProduct.productId || likedProduct.id || '').trim();
+      const candidateName = String(likedProduct.productName || likedProduct.name || '').trim();
+      const exists = mergedProducts.some((p: any) =>
+        String(p?.productId || p?.id || '').trim() === candidateId ||
+        String(p?.productName || p?.name || '').trim() === candidateName,
+      );
+      if (!exists) {
+        mergedProducts.push({
+          productId: candidateId || candidateName,
+          productName: candidateName || 'Product',
+          name: candidateName || 'Product',
+          category: likedProduct.category || '',
+          imageUrl: likedProduct.imageUrl || likedProduct.image || '',
+          offerPrice: Number(likedProduct.offerPrice || likedProduct.price || 0),
+          originalPrice: Number(likedProduct.originalPrice || 0),
+        });
+      }
+    }
+
+    await this.offerLikeHistoryModel.updateOne(
+      {
+        userId: String(userId),
+        offerPublicId: String((offer as any)._id),
+      },
+      {
+        $setOnInsert: {
+          userId: String(userId),
+          userName: userName || 'Anonymous',
+          merchantId: String((offer as any).merchantId || ''),
+          offerPublicId: String((offer as any)._id),
+          offerRequestId: String((offer as any).requestId || ''),
+          offerTitle: String((offer as any).title || ''),
+          offerCategory: String((offer as any).category || ''),
+          firstLikedAt: new Date(),
+        },
+        $set: {
+          selectedProducts: mergedProducts,
+        },
+      },
+      { upsert: true },
+    ).exec();
+  }
+
+  async likeProduct(
+    userId: string,
+    offerId: string,
+    product: any,
+  ): Promise<{ wishlist: string[]; liked: boolean }> {
+    if (!offerId) {
+      throw new BadRequestException('Offer ID is required to like a product');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const wishlist = Array.isArray(user.wishlist) ? [...user.wishlist] : [];
+    let liked = false;
+    if (!wishlist.includes(offerId)) {
+      wishlist.push(offerId);
+      await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
+      liked = true;
+    }
+
+    await this.upsertOfferLikeHistory(userId, user.name || 'Anonymous', offerId, product);
+    return { wishlist, liked: true };
   }
 
   async getNotifications(userId: string, page = 1, limit = 20): Promise<{ notifications: any[]; unreadCount: number }> {
@@ -1218,25 +1325,168 @@ export class UsersService implements OnModuleInit {
     return user.wishlist || [];
   }
 
+  async getMerchantLikedProducts(merchantId: string, limit = 10) {
+    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 10));
+    if (!this.offerLikeHistoryModel) {
+      return { offers: [], products: [] };
+    }
+
+    const likes = await this.offerLikeHistoryModel
+      .find({ merchantId: String(merchantId) })
+      .sort({ firstLikedAt: -1 })
+      .lean()
+      .exec();
+
+    if (!likes.length) {
+      return { offers: [], products: [] };
+    }
+
+    const offerMap = new Map<string, any>();
+    for (const row of likes as any[]) {
+      const offerKey = String(row.offerPublicId || row.offerRequestId || '');
+      if (!offerKey) continue;
+
+      if (!offerMap.has(offerKey)) {
+        offerMap.set(offerKey, {
+          offerId: offerKey,
+          requestId: String(row.offerRequestId || ''),
+          name: String(row.offerTitle || 'Untitled Offer'),
+          type: String(row.offerCategory || 'General'),
+          image: '/images/deal2.avif',
+          likes: 0,
+          customerSet: new Set<string>(),
+          selectedProducts: Array.isArray(row.selectedProducts) ? row.selectedProducts : [],
+        });
+      }
+
+      const offerEntry = offerMap.get(offerKey);
+      offerEntry.likes += 1;
+      if (row.userName) {
+        offerEntry.customerSet.add(String(row.userName));
+      }
+      if ((!offerEntry.selectedProducts || !offerEntry.selectedProducts.length) && Array.isArray(row.selectedProducts)) {
+        offerEntry.selectedProducts = row.selectedProducts;
+      }
+    }
+
+    const offers = Array.from(offerMap.values())
+      .map((item) => {
+        const customers = Array.from(item.customerSet).slice(0, 4);
+        return {
+          offerId: item.offerId,
+          requestId: item.requestId,
+          name: item.name,
+          type: item.type,
+          image: item.image,
+          likes: item.likes,
+          customerCount: item.customerSet.size,
+          customers: customers.join(', '),
+          selectedProducts: item.selectedProducts || [],
+        };
+      })
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, safeLimit);
+
+    const productMap = new Map<string, any>();
+    for (const offer of offers) {
+      const products = Array.isArray(offer.selectedProducts) ? offer.selectedProducts : [];
+      for (const product of products) {
+        const key = String(product?.productId || product?.id || product?.productName || product?.name || '').trim();
+        if (!key) continue;
+
+        if (!productMap.has(key)) {
+          productMap.set(key, {
+            productId: key,
+            name: String(product?.productName || product?.name || 'Untitled Product'),
+            type: String(product?.category || offer.type || 'General'),
+            image: String(product?.imageUrl || '/images/deal2.avif'),
+            likes: 0,
+            customerSet: new Set<string>(),
+            offerName: offer.name,
+          });
+        }
+
+        const productEntry = productMap.get(key);
+        productEntry.likes += offer.likes;
+        const offerCustomers = offer.customers ? String(offer.customers).split(',').map((name) => name.trim()).filter(Boolean) : [];
+        for (const customer of offerCustomers) {
+          productEntry.customerSet.add(customer);
+        }
+      }
+    }
+
+    const products = Array.from(productMap.values())
+      .map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        type: item.type,
+        image: item.image,
+        likes: item.likes,
+        customerCount: item.customerSet.size,
+        customers: Array.from(item.customerSet).slice(0, 4).join(', '),
+        offerName: item.offerName,
+      }))
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, safeLimit);
+
+    return { offers, products };
+  }
+
   async getWishlistAds(userId: string): Promise<any[]> {
     const ids = await this.getWishlistIds(userId);
     if (!ids || ids.length === 0) return [];
 
-    if (!this.adsService) {
-      this.logger.error('AdsService not available to fetch wishlist ads');
-      return [];
-    }
+    const ads: any[] = [];
+    const offers: any[] = [];
 
-    const ads = [];
+    // Fetch Ads
     for (const id of ids) {
       try {
-        const ad = await this.adsService.getAdById(id);
-        if (ad) ads.push(ad);
+        const ad = await this.adsService?.getAdById(id);
+        if (ad) {
+          const adData =
+            typeof (ad as any).toObject === 'function' ? (ad as any).toObject() : ad;
+          ads.push({ ...adData, _type: 'ad' });
+        }
       } catch (error) {
-        this.logger.warn(`Ad ${id} not found in wishlist context: ${error.message}`);
+        // Not an ad ID, try offer next
       }
     }
-    return ads;
+
+    // Fetch Offers (OfferPromotion) for IDs not found as Ads
+    const foundAdIds = new Set(
+      ads.flatMap(ad => [String(ad._id), String(ad.adId)].filter(Boolean)),
+    );
+    const remainingIds = ids.filter(id => !foundAdIds.has(id));
+    for (const id of remainingIds) {
+      try {
+        const offer = await this.offerPromotionModel?.findById(id).lean().exec();
+        if (offer) {
+          offers.push({
+            ...offer,
+            _type: 'offer',
+            adId: String(offer._id),
+            title: offer.title,
+            price: offer.totalPrice,
+            images: offer.imageUrl ? [offer.imageUrl] : [],
+            category: offer.category,
+            merchant: {
+              name: offer.merchantName,
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.warn(`Offer ${id} not found in wishlist context: ${error.message}`);
+      }
+    }
+
+    // Combine and sort by createdAt descending (newest first)
+    const combined = [...ads, ...offers].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+    );
+
+    return combined;
   }
 
   // ==================== USER REPORT METHODS ====================

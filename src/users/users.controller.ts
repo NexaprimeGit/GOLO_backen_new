@@ -221,6 +221,27 @@ export class UsersController {
     return { success: true, data: await this.usersService.toggleWishlist(user.id, adId) };
   }
 
+  @Post('likes/product')
+  @UseGuards(JwtAuthGuard)
+  async likeProduct(
+    @CurrentUser() user: any,
+    @Body() body: { offerId: string; product?: any },
+  ) {
+    return {
+      success: true,
+      data: await this.usersService.likeProduct(user.id, body?.offerId, body?.product || null),
+    };
+  }
+
+  @Get('merchant/liked-products')
+  @UseGuards(JwtAuthGuard)
+  async getMerchantLikedProducts(@CurrentUser() user: any, @Query('limit') limit?: string) {
+    return {
+      success: true,
+      data: await this.usersService.getMerchantLikedProducts(user.id, limit ? Number(limit) : 10),
+    };
+  }
+
   // ==================== NOTIFICATIONS ====================
   @Get('notifications')
   @UseGuards(JwtAuthGuard)

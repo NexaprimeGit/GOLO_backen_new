@@ -7,6 +7,7 @@ import { BannerPromotion, BannerPromotionSchema } from '../banners/schemas/banne
 import { OfferPromotion, OfferPromotionSchema } from '../offers/schemas/offer-promotion.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
+import { MerchantProduct, MerchantProductSchema } from '../merchant-products/schemas/merchant-product.schema';
 import { KafkaModule } from '../kafka/kafka.module';
 import { VouchersKafkaController } from './vouchers.kafka.controller';
 import { OrdersModule } from '../orders/orders.module';
@@ -19,6 +20,7 @@ import { OrdersModule } from '../orders/orders.module';
       { name: OfferPromotion.name, schema: OfferPromotionSchema },
       { name: User.name, schema: UserSchema },
       { name: Merchant.name, schema: MerchantSchema },
+      { name: MerchantProduct.name, schema: MerchantProductSchema },
     ]),
     forwardRef(() => KafkaModule),
     OrdersModule,
