@@ -21,6 +21,10 @@ export class OfferPromotion {
   @Prop({ required: true, unique: true, index: true })
   requestId: string;
 
+  // Kept for compatibility with older deployments that still have a unique index on this field.
+  @Prop({ default: null })
+  idempotencyKey?: string;
+
   @Prop({ required: true, index: true })
   merchantId: string;
 
