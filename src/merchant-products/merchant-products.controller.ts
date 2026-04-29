@@ -37,6 +37,11 @@ export class MerchantProductsController {
     return this.merchantProductsService.listProductsByMerchantId(merchantId, query);
   }
 
+  @Get('public/item/:productId')
+  async getOnePublic(@Param('productId') productId: string) {
+    return this.merchantProductsService.getPublicProductById(productId);
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.MERCHANT, UserRole.ADMIN)
