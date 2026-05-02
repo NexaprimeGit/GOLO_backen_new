@@ -103,6 +103,49 @@ export class OffersService implements OnModuleInit {
     return { selectedDates: sorted, startDate, endDate };
   }
 
+  private computeOfferPricing(row: any) {
+    const selectedProducts: any[] = Array.isArray(row?.selectedProducts) ? row.selectedProducts : [];
+
+    const computedBestDiscountPercent = selectedProducts.reduce((best, product) => {
+      const original = Number(product?.originalPrice || 0);
+      const offerPrice = Number(product?.offerPrice || 0);
+      if (original <= 0 || offerPrice < 0 || offerPrice >= original) return best;
+      const discountPercent = ((original - offerPrice) / original) * 100;
+      return Math.max(best, discountPercent);
+    }, 0);
+
+    const summedOfferPrice = selectedProducts.reduce((sum, product) => {
+      const value = Number(product?.offerPrice || 0);
+      return value > 0 ? sum + value : sum;
+    }, 0);
+
+    return {
+      selectedProducts,
+      displayPrice: summedOfferPrice > 0 ? summedOfferPrice : Number(row?.totalPrice || 0),
+      discountPercent: Math.round(computedBestDiscountPercent),
+    };
+  }
+
+  private normalizeMerchantOfferRow(row: any) {
+    const pricing = this.computeOfferPricing(row);
+    const startsAt = row?.startDate || row?.selectedDates?.[0] || null;
+    const endsAt = row?.endDate || (Array.isArray(row?.selectedDates) ? row.selectedDates[row.selectedDates.length - 1] : null) || null;
+
+    return {
+      ...row,
+      title: row?.title || '',
+      category: row?.category || '',
+      imageUrl: row?.imageUrl || '',
+      totalPrice: Number(row?.totalPrice || 0),
+      displayPrice: pricing.displayPrice,
+      discountPercent: pricing.discountPercent,
+      startsAt,
+      endsAt,
+      selectedProducts: pricing.selectedProducts,
+      selectedDates: Array.isArray(row?.selectedDates) ? row.selectedDates : [],
+    };
+  }
+
   // Legacy detection removed — offers are handled only from `offers` collection
   private isLikelyLegacyOffer(_: any): boolean {
     return false;
@@ -122,7 +165,7 @@ export class OffersService implements OnModuleInit {
         await this.offerModel.collection.dropIndex(indexName);
         this.logger.warn(`[Offers] Dropped legacy index on startup: ${indexName}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.warn(`[Offers] Index cleanup skipped: ${error?.message || 'unknown error'}`);
     }
   }
@@ -215,7 +258,7 @@ export class OffersService implements OnModuleInit {
 
     await this.redisService.deleteByPattern(`golo:offers:merchant:${merchantId}:*`);
     return request;
-  } catch (error) {
+  } catch (error: any) {
     if (error?.name === 'ValidationError' || error?.name === 'CastError') {
       throw new BadRequestException(error?.message || 'Invalid offer payload');
     }
@@ -232,16 +275,31 @@ export class OffersService implements OnModuleInit {
 
   async listMerchantOffers(merchantId: string) {
     const rows = await this.offerModel.find({ merchantId }).sort({ createdAt: -1 }).lean().exec();
-    return rows;
+    return rows.map((row) => this.normalizeMerchantOfferRow(row));
   }
 
   async updateMerchantOffer(requestId: string, merchantId: string, payload: any) {
     const request = await this.offerModel.findOne({ requestId, merchantId }).exec();
     if (!request) throw new NotFoundException('Offer not found');
 
-    if (payload.title !== undefined) request.title = String(payload.title).trim();
-    if (payload.category !== undefined) request.category = String(payload.category).trim();
-    if (payload.imageUrl !== undefined) request.imageUrl = payload.imageUrl;
+    const nextTitle = payload.title ?? payload.bannerTitle;
+    const nextCategory = payload.category ?? payload.bannerCategory;
+    if (nextTitle !== undefined) request.title = String(nextTitle || '').trim();
+    if (nextCategory !== undefined) request.category = String(nextCategory || '').trim();
+    if (payload.imageUrl !== undefined) request.imageUrl = String(payload.imageUrl || '').trim();
+    if (payload.description !== undefined) request.description = String(payload.description || '').trim();
+    if (payload.recommendedSize !== undefined) request.recommendedSize = payload.recommendedSize;
+    if (payload.loyaltyRewardEnabled !== undefined) request.loyaltyRewardEnabled = Boolean(payload.loyaltyRewardEnabled);
+    if (payload.loyaltyStarsToOffer !== undefined) request.loyaltyStarsToOffer = Number(payload.loyaltyStarsToOffer || 0);
+    if (payload.loyaltyStarsPerPurchase !== undefined) request.loyaltyStarsPerPurchase = Number(payload.loyaltyStarsPerPurchase || 0);
+    if (payload.loyaltyScorePerStar !== undefined) request.loyaltyScorePerStar = Number(payload.loyaltyScorePerStar || 0);
+    if (payload.loyaltyPointsPerPurchase !== undefined) request.loyaltyPointsPerPurchase = Number(payload.loyaltyPointsPerPurchase || 0);
+    if (payload.promotionExpiryText !== undefined) request.promotionExpiryText = String(payload.promotionExpiryText || '').trim();
+    if (payload.termsAndConditions !== undefined) request.termsAndConditions = String(payload.termsAndConditions || '').trim();
+    if (payload.exampleUsage !== undefined) request.exampleUsage = String(payload.exampleUsage || '').trim();
+    if (payload.dailyRate !== undefined) request.dailyRate = Number(payload.dailyRate || 0);
+    if (payload.platformFee !== undefined) request.platformFee = Number(payload.platformFee || 0);
+    if (payload.totalPrice !== undefined) request.totalPrice = Number(payload.totalPrice || 0);
     if (Array.isArray(payload.selectedDates) && payload.selectedDates.length) {
       const normalized = this.normalizeVisibilityDates(payload.selectedDates);
       if (!normalized.length) throw new BadRequestException('Please provide valid selectedDates');
@@ -252,6 +310,18 @@ export class OffersService implements OnModuleInit {
       request.selectedDays = selectedDates.length;
       request.totalPrice = request.dailyRate * request.selectedDays + request.platformFee;
     }
+
+    if (Array.isArray(payload.selectedProducts)) {
+      request.selectedProducts = payload.selectedProducts;
+      const pricing = this.computeOfferPricing(request);
+      request.totalPrice = Number(payload.totalPrice || pricing.displayPrice || request.totalPrice || 0);
+    }
+
+    request.markModified('selectedProducts');
+    request.markModified('selectedDates');
+    request.markModified('title');
+    request.markModified('category');
+    request.markModified('imageUrl');
 
     if (payload.action === 'pause') {
       request.isActive = false;
@@ -266,7 +336,7 @@ export class OffersService implements OnModuleInit {
 
     await request.save();
     await this.redisService.deleteByPattern(this.offerMerchantCacheKey(merchantId));
-    return request;
+    return this.normalizeMerchantOfferRow(request.toObject());
   }
 
   async deleteMerchantOffer(requestId: string, merchantId: string) {
@@ -329,8 +399,8 @@ export class OffersService implements OnModuleInit {
       category: rowAny.category || '',
       imageUrl: rowAny.imageUrl || '',
       totalPrice: Number(row.totalPrice || 0),
-      displayPrice: lowestOfferPrice !== Number.MAX_SAFE_INTEGER ? lowestOfferPrice : Number(row.totalPrice || 0),
-      discountPercent: Math.round(computedBestDiscountPercent),
+      displayPrice: this.computeOfferPricing(row).displayPrice,
+      discountPercent: this.computeOfferPricing(row).discountPercent,
       startsAt,
       endsAt,
       status: row.status,
@@ -463,6 +533,7 @@ export class OffersService implements OnModuleInit {
     if (!hasUserCoordinates && !locationNeedle) {
       let normalized = offerRows.map((row) => {
         const merchant = merchantsByUserId.get(String(row.merchantId));
+        const pricing = this.computeOfferPricing(row);
         const startsAt = row.startDate ? new Date(row.startDate) : null;
         const endsAt = row.endDate ? new Date(row.endDate) : null;
         const isActiveNow = Boolean(startsAt && endsAt) && startsAt <= now && endsAt >= now;
@@ -473,8 +544,8 @@ export class OffersService implements OnModuleInit {
           category: row.category,
           imageUrl: row.imageUrl || '',
           totalPrice: Number(row.totalPrice || 0),
-          displayPrice: Number(row.totalPrice || 0),
-          discountPercent: 0,
+          displayPrice: pricing.displayPrice,
+          discountPercent: pricing.discountPercent,
           startsAt: row.startDate,
           endsAt: row.endDate,
           status: row.status,
@@ -490,7 +561,7 @@ export class OffersService implements OnModuleInit {
             longitude: merchant?.storeLocationLongitude || null,
             profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
           },
-          selectedProducts: Array.isArray(row.selectedProducts) ? row.selectedProducts : [],
+          selectedProducts: pricing.selectedProducts,
           createdAt: row.createdAt,
         };
       });
@@ -535,23 +606,7 @@ export class OffersService implements OnModuleInit {
       if (hasUserCoordinates && hasMerchantCoordinates) {
         distanceKm = this.calculateDistanceKm(Number(params.latitude), Number(params.longitude), latitude, longitude);
       }
-
-      const selectedProducts: any[] = Array.isArray(row.selectedProducts) ? row.selectedProducts : [];
-
-      const computedBestDiscountPercent = selectedProducts.reduce((best, product) => {
-        const original = Number(product?.originalPrice || 0);
-        const offer = Number(product?.offerPrice || 0);
-        if (original <= 0 || offer < 0 || offer >= original) return best;
-        const discountPercent = ((original - offer) / original) * 100;
-        return Math.max(best, discountPercent);
-      }, 0);
-
-      const lowestOfferPrice = selectedProducts.length
-        ? selectedProducts.reduce((min, product) => {
-            const value = Number(product?.offerPrice || 0);
-            return value > 0 ? Math.min(min, value) : min;
-          }, Number.MAX_SAFE_INTEGER)
-        : Number.MAX_SAFE_INTEGER;
+      const pricing = this.computeOfferPricing(row);
 
       const startsAt = row.startDate ? new Date(row.startDate) : null;
       const endsAt = row.endDate ? new Date(row.endDate) : null;
@@ -564,8 +619,8 @@ export class OffersService implements OnModuleInit {
         category: row.category,
         imageUrl: row.imageUrl || '',
         totalPrice: Number(row.totalPrice || 0),
-        displayPrice: lowestOfferPrice !== Number.MAX_SAFE_INTEGER ? lowestOfferPrice : Number(row.totalPrice || 0),
-        discountPercent: Math.round(computedBestDiscountPercent),
+        displayPrice: pricing.displayPrice,
+        discountPercent: pricing.discountPercent,
         startsAt: row.startDate,
         endsAt: row.endDate,
         status: row.status,
@@ -581,7 +636,7 @@ export class OffersService implements OnModuleInit {
           longitude: hasMerchantCoordinates ? longitude : null,
           profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
         },
-        selectedProducts,
+        selectedProducts: pricing.selectedProducts,
         createdAt: row.createdAt,
       };
     });

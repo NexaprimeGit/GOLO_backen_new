@@ -16,8 +16,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { OffersService } from './offers.service';
 import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
-import { SubmitBannerPromotionDto } from '../banners/dto/submit-banner-promotion.dto';
-import { UpdateBannerPromotionDto } from '../banners/dto/update-banner-promotion.dto';
+import { SubmitOfferPromotionDto } from './dto/submit-offer-promotion.dto';
+import { UpdateOfferPromotionDto } from './dto/update-offer-promotion.dto';
 
 @Controller('offers')
 export class OffersController {
@@ -28,7 +28,7 @@ export class OffersController {
 
   @Post('request')
   @UseGuards(JwtAuthGuard)
-  async submitOfferRequest(@Body() body: SubmitBannerPromotionDto, @CurrentUser() user: any) {
+  async submitOfferRequest(@Body() body: SubmitOfferPromotionDto, @CurrentUser() user: any) {
     try {
       const userId = user?.id || user?.sub || user?._id;
       if (!userId) {
@@ -80,7 +80,7 @@ export class OffersController {
 
   @Put(':requestId')
   @UseGuards(JwtAuthGuard)
-  async updateMyOffer(@Param('requestId') requestId: string, @Body() body: UpdateBannerPromotionDto, @CurrentUser() user: any) {
+  async updateMyOffer(@Param('requestId') requestId: string, @Body() body: UpdateOfferPromotionDto, @CurrentUser() user: any) {
     const updated = await this.offersService.updateMerchantOffer(requestId, user.id, body);
     try { await this.kafkaService.emit(KAFKA_TOPICS.OFFER_PROMOTION_REVIEWED, { requestId, merchantId: user.id }); } catch {}
     return { success: true, message: 'Offer updated', data: updated, timestamp: new Date().toISOString() };

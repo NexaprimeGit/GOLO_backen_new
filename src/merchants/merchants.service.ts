@@ -4,12 +4,14 @@ import { Model } from 'mongoose';
 import { Merchant, MerchantDocument } from '../users/schemas/merchant.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { UpdateStoreLocationDto } from '../users/dto/update-store-location.dto';
+import { Review, ReviewDocument, ReviewStatus } from '../reviews/schemas/review.schema';
 
 @Injectable()
 export class MerchantsService {
   constructor(
     @InjectModel(Merchant.name) private merchantModel: Model<MerchantDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Review.name) private reviewModel: Model<ReviewDocument>,
   ) {}
 
   async getPublicMerchantProfile(merchantId: string) {
@@ -25,6 +27,17 @@ export class MerchantsService {
     if (!user || user.accountType !== 'merchant') {
       throw new NotFoundException('Merchant not found');
     }
+
+    const [reviewStats] = await this.reviewModel.aggregate([
+      { $match: { merchantId: user._id, status: ReviewStatus.APPROVED } },
+      {
+        $group: {
+          _id: null,
+          totalReviews: { $sum: 1 },
+          averageRating: { $avg: '$rating' },
+        },
+      },
+    ]);
 
     const profile = user.profile || {};
 
@@ -45,6 +58,8 @@ export class MerchantsService {
               ? profile.interests
               : [merchant?.storeCategory, merchant?.storeSubCategory].filter(Boolean),
         },
+        averageRating: Number((reviewStats?.averageRating || 0).toFixed(1)),
+        totalReviews: Number(reviewStats?.totalReviews || 0),
         merchantProfile: merchant || null,
       },
     };

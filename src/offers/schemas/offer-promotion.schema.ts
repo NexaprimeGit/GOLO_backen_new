@@ -46,6 +46,9 @@ export class OfferPromotion {
   @Prop({})
   imageUrl: string;
 
+  @Prop({ default: '1920 x 520 px' })
+  recommendedSize: string;
+
   @Prop({ type: [Date], required: true, default: [] })
   selectedDates: Date[];
 

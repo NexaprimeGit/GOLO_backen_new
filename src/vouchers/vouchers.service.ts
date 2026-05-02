@@ -13,6 +13,7 @@ import { UserDocument } from '../users/schemas/user.schema';
 import { MerchantDocument } from '../users/schemas/merchant.schema';
 import { MerchantProduct, MerchantProductDocument } from '../merchant-products/schemas/merchant-product.schema';
 import { OrdersService } from '../orders/orders.service';
+import { RedisService } from '../common/services/redis.service';
 
 @Injectable()
 export class VouchersService implements OnModuleInit {
@@ -41,7 +42,28 @@ export class VouchersService implements OnModuleInit {
     @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
     @InjectModel(MerchantProduct.name) private merchantProductModel: Model<MerchantProductDocument>,
     private ordersService: OrdersService,
+    private redisService: RedisService,
   ) {}
+
+  private getRedemptionRedisKey(merchantId: string) {
+    return `merchant:redemptions:daily:${merchantId}`;
+  }
+
+  private async recordMerchantRedemption(merchantId: string, occurredAt = new Date()): Promise<void> {
+    const redisClient = this.redisService.getClient();
+    if (!redisClient || !merchantId) {
+      return;
+    }
+
+    try {
+      const dayKey = occurredAt.toISOString().slice(0, 10);
+      const redisKey = this.getRedemptionRedisKey(merchantId);
+      await redisClient.hIncrBy(redisKey, dayKey, 1);
+      await redisClient.expire(redisKey, 60 * 60 * 24 * 60);
+    } catch (error: any) {
+      this.logger.error(`Failed to record merchant redemption for ${merchantId}: ${error.message}`);
+    }
+  }
 
   async onModuleInit() {
     try {
@@ -957,6 +979,8 @@ if (!offerResult) {
           await user.save();
         }
       }
+
+      await this.recordMerchantRedemption(String(actualMerchantId || offerMerchantId || voucher.merchantId));
 
       // Get user details (after update)
       const user = await this.userModel.findById(voucher.userId).select('name email loyaltyPoints merchantLoyaltyPoints');

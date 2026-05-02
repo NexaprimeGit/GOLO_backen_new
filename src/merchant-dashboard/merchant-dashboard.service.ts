@@ -1,4 +1,4 @@
-  import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Ad, AdDocument } from '../ads/schemas/category-schemas/ad.schema';
@@ -6,6 +6,7 @@ import { Order, OrderDocument, OrderStatus } from '../orders/schemas/order.schem
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Review, ReviewDocument } from '../reviews/schemas/review.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { RedisService } from '../common/services/redis.service';
 
 @Injectable()
 export class MerchantDashboardService {
@@ -15,6 +16,7 @@ export class MerchantDashboardService {
     @InjectModel(Product.name) private readonly productModel: Model<ProductDocument>,
     @InjectModel(Review.name) private readonly reviewModel: Model<ReviewDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly redisService: RedisService,
   ) {}
 
   private buildDateBuckets(days: number) {
@@ -66,6 +68,44 @@ export class MerchantDashboardService {
       Mobile: Math.round((normalized.Mobile / total) * 100),
       Desktop: Math.round((normalized.Desktop / total) * 100),
       Tablet: Math.max(0, 100 - Math.round((normalized.Mobile / total) * 100) - Math.round((normalized.Desktop / total) * 100)),
+    };
+  }
+
+  private getRedemptionRedisKey(merchantId: string) {
+    return `merchant:redemptions:daily:${merchantId}`;
+  }
+
+  async recordMerchantRedemption(merchantId: string, occurredAt = new Date()) {
+    const redisClient = this.redisService.getClient();
+    if (!redisClient || !merchantId) {
+      return;
+    }
+
+    const dayKey = occurredAt.toISOString().slice(0, 10);
+    const redisKey = this.getRedemptionRedisKey(merchantId);
+
+    await redisClient.hIncrBy(redisKey, dayKey, 1);
+    await redisClient.expire(redisKey, 60 * 60 * 24 * 60);
+  }
+
+  async getRedemptionTrend(merchantId: string, period: 'weekly' | 'monthly' = 'weekly') {
+    const days = period === 'monthly' ? 30 : 7;
+    const { keys, labels } = this.buildDateBuckets(days);
+    const redisClient = this.redisService.getClient();
+    const redemptionCounts = keys.map(() => 0);
+
+    if (redisClient) {
+      const storedCounts = await redisClient.hGetAll(this.getRedemptionRedisKey(merchantId));
+      keys.forEach((key, index) => {
+        redemptionCounts[index] = Number(storedCounts[key] || 0);
+      });
+    }
+
+    return {
+      labels,
+      values: redemptionCounts,
+      total: redemptionCounts.reduce((sum, count) => sum + count, 0),
+      today: redemptionCounts[redemptionCounts.length - 1] || 0,
     };
   }
 
@@ -280,6 +320,8 @@ export class MerchantDashboardService {
       this.getMerchantTrend(merchantId),
     ]);
 
+    const redemptions = await this.getRedemptionTrend(merchantId, 'weekly');
+
     return {
       success: true,
       data: {
@@ -288,6 +330,7 @@ export class MerchantDashboardService {
         products: products.data,
         events: events.data,
         trend: trend.data,
+        redemptions,
       },
       updatedAt: new Date().toISOString(),
     };
