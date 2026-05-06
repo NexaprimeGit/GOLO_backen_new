@@ -494,6 +494,16 @@ export class OffersService implements OnModuleInit {
     const topDiscountOnly = Boolean(params.topDiscount);
     const activeNowOnly = params.activeNow === undefined ? true : Boolean(params.activeNow);
 
+    const normalizeCategoryToken = (value: any) =>
+      String(value || '')
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const normalizedCategoryNeedle = normalizeCategoryToken(categoryNeedle);
+
     const hasUserCoordinates =
       typeof params.latitude === 'number' &&
       !Number.isNaN(params.latitude) &&
@@ -521,6 +531,27 @@ export class OffersService implements OnModuleInit {
         if (t === 'percentage off' || t.includes('percent') || t.includes('%')) return blob.includes('%') || blob.includes('percent') || blob.includes('percentage');
         return blob.includes(t);
       });
+    };
+
+    const matchesSelectedCategory = (row: any) => {
+      if (!categoryNeedle) return true;
+
+      const offerCategory = String(row?.category || '').toLowerCase();
+      const merchantCategory = String(row?.merchant?.category || '').toLowerCase();
+      const merchantSubCategory = String(row?.merchant?.subCategory || '').toLowerCase();
+
+      const normalizedOfferCategory = normalizeCategoryToken(offerCategory);
+      const normalizedMerchantCategory = normalizeCategoryToken(merchantCategory);
+      const normalizedMerchantSubCategory = normalizeCategoryToken(merchantSubCategory);
+
+      return (
+        offerCategory === categoryNeedle ||
+        merchantCategory === categoryNeedle ||
+        merchantSubCategory === categoryNeedle ||
+        normalizedOfferCategory === normalizedCategoryNeedle ||
+        normalizedMerchantCategory === normalizedCategoryNeedle ||
+        normalizedMerchantSubCategory === normalizedCategoryNeedle
+      );
     };
 
     let offerRows: any[] = [];
@@ -625,9 +656,7 @@ export class OffersService implements OnModuleInit {
         });
       }
 
-      if (categoryNeedle) {
-        normalized = normalized.filter((row) => String(row.category || '').toLowerCase() === categoryNeedle);
-      }
+      normalized = normalized.filter(matchesSelectedCategory);
 
       if (offerTypeTokens.length) {
         normalized = normalized.filter((row) => matchOfferTypes(row));
@@ -723,9 +752,7 @@ export class OffersService implements OnModuleInit {
       });
     }
 
-    if (categoryNeedle) {
-      normalized = normalized.filter((row) => String(row.category || '').toLowerCase() === categoryNeedle);
-    }
+    normalized = normalized.filter(matchesSelectedCategory);
 
     if (offerTypeTokens.length) {
       normalized = normalized.filter((row) => matchOfferTypes(row));
