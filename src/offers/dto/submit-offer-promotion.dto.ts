@@ -58,17 +58,24 @@ export class SubmitOfferPromotionDto {
   @IsString()
   bannerCategory?: string;
 
+  // Business category — auto-filled from merchant profile if not provided
   @IsOptional()
   @IsString()
   category?: string;
 
-  @IsOptional()
-  @IsString()
-  description?: string;
-
+  // Existing field: distinguishes banner vs offer ad type
   @IsOptional()
   @IsEnum(PromotionTypeDto)
   promotionType?: PromotionTypeDto;
+
+  // Promotional tag (e.g., "Special", "Flash Sale", "Combo") — for UI grouping/filtering
+  @IsOptional()
+  @IsString()
+  promoTag?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @IsString()
   @IsNotEmpty()

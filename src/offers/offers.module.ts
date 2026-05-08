@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { KafkaModule } from '../kafka/kafka.module';
+import { RedisModule } from '../common/services/redis.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
 import { MerchantProduct, MerchantProductSchema } from '../merchant-products/schemas/merchant-product.schema';
@@ -19,6 +20,7 @@ import { OffersService } from './offers.service';
       { name: MerchantProduct.name, schema: MerchantProductSchema },
     ]),
     forwardRef(() => KafkaModule),
+    RedisModule, // Cache offer listings, details, nearby offers
   ],
   controllers: [OffersController],
   providers: [OffersService],

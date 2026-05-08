@@ -13,6 +13,12 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 @Injectable()
 export class OffersService implements OnModuleInit {
   private readonly logger = new Logger(OffersService.name);
+  private readonly cacheTtlSeconds = {
+    merchantOffers: 30,      // Short TTL so Device B sees new offers within 30s
+    publicOffer: 300,
+    template: 600,
+    nearbyOffers: 120,       // 2 min — nearby is public data, safe to cache longer
+  } as const;
 
   constructor(
     @InjectModel(OfferPromotion.name) private readonly offerModel: Model<OfferPromotionDocument>,
@@ -28,6 +34,70 @@ export class OffersService implements OnModuleInit {
 
   private offerTemplateCacheKey(merchantId: string) {
     return `golo:offers:template:${merchantId}`;
+  }
+
+  private publicOfferCacheKey(identifier: string) {
+    return `golo:offers:public:${identifier}`;
+  }
+
+  private nearbyOffersCacheKey(params: any): string {
+    const hasCoordinates = Number.isFinite(Number(params?.latitude)) && Number.isFinite(Number(params?.longitude));
+
+    const normalizedKey = {
+      activeNow: params?.activeNow === undefined ? true : Boolean(params.activeNow),
+      category: String(params?.category || '').trim().toLowerCase(),
+      lat: hasCoordinates ? Number(Number(params.latitude).toFixed(2)) : null,
+      lng: hasCoordinates ? Number(Number(params.longitude).toFixed(2)) : null,
+      limit: Math.min(50, Math.max(1, Number(params?.limit) || 20)),
+      location: String(params?.location || '').trim().toLowerCase(),
+      maxPrice: Number.isFinite(Number(params?.maxPrice)) && Number(params.maxPrice) > 0 ? Number(params.maxPrice) : null,
+      offerTypes: String(params?.offerTypes || '').trim().toLowerCase(),
+      page: Math.max(1, Number(params?.page) || 1),
+      query: String(params?.query || '').trim().toLowerCase(),
+      radiusKm: Math.min(100, Math.max(1, Number(params?.radiusKm) || 5)),
+      sort: String(params?.sort || '').trim().toLowerCase(),
+      topDiscount: Boolean(params?.topDiscount),
+    };
+
+    // Hash the params object to keep Redis key short (< 200 chars).
+    const raw = JSON.stringify(normalizedKey);
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) {
+      const chr = raw.charCodeAt(i);
+      hash = (hash << 5) - hash + chr;
+      hash |= 0; // Convert to 32-bit int
+    }
+    return `golo:offers:nearby:${Math.abs(hash).toString(36)}`;
+  }
+
+  private async readCache<T>(key: string): Promise<T | null> {
+    return this.redisService.get<T>(key);
+  }
+
+  private async writeCache(key: string, value: any, ttlSeconds: number) {
+    await this.redisService.set(key, value, ttlSeconds);
+  }
+
+  // Use del() for exact keys and SCAN-based deleteByPattern only for wildcards.
+  private async clearCache(keyOrPattern: string): Promise<void> {
+    await this.redisService.deleteByPattern(keyOrPattern);
+  }
+
+  private async clearExactKey(key: string): Promise<void> {
+    await this.redisService.del(key);
+  }
+
+  private async clearOfferCaches(merchantId: string, identifiers: string[] = []): Promise<void> {
+    await Promise.all([
+      // Exact merchant key — use del, not pattern scan
+      this.clearExactKey(this.offerMerchantCacheKey(merchantId)),
+      // Template is also an exact key
+      this.clearExactKey(this.offerTemplateCacheKey(merchantId)),
+      // Nearby is a wildcard pattern — use SCAN-based deleteByPattern
+      this.clearCache('golo:offers:nearby:*'),
+      // Public offer keys by known identifiers (exact)
+      ...identifiers.map((id) => this.clearExactKey(this.publicOfferCacheKey(id))),
+    ]);
   }
 
   private readonly legacyOfferCategorySet = new Set([
@@ -189,13 +259,20 @@ export class OffersService implements OnModuleInit {
         throw new BadRequestException('Only merchants can submit offers');
       }
 
-      const merchantProfile = await this.merchantModel.findOne({ userId: merchantId }).select('storeLocationLatitude storeLocationLongitude').lean().exec();
-      this.logger.log(`[submitOfferPromotionRequest] Merchant profile: ${JSON.stringify(merchantProfile)}`);
-      
-      const latitude = Number(merchantProfile?.storeLocationLatitude);
-      const longitude = Number(merchantProfile?.storeLocationLongitude);
-      const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
-      if (!hasCoords) throw new BadRequestException('Store coordinates missing. Set store location before publishing offers.');
+       const merchantProfile = await this.merchantModel.findOne({ userId: merchantId })
+         .select('storeCategory storeSubCategory storeLocationLatitude storeLocationLongitude')
+         .lean()
+         .exec();
+       this.logger.log(`[submitOfferPromotionRequest] Merchant profile: ${JSON.stringify(merchantProfile)}`);
+
+       const latitude = Number(merchantProfile?.storeLocationLatitude);
+       const longitude = Number(merchantProfile?.storeLocationLongitude);
+       const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+       if (!hasCoords) throw new BadRequestException('Store coordinates missing. Set store location before publishing offers.');
+
+       // Determine business category from merchant profile (fallbacks to payload or generic)
+       const businessCategory = (merchantProfile?.storeCategory || '').trim() || (payload.category || '').trim() || 'General';
+       const businessSubCategory = (merchantProfile?.storeSubCategory || '').trim();
 
     const normalizedDates = this.normalizeVisibilityDates(payload.selectedDates);
     if (!normalizedDates.length) throw new BadRequestException('Please select at least one valid visibility date');
@@ -211,36 +288,42 @@ export class OffersService implements OnModuleInit {
     const platformFee = Number(payload.platformFee ?? (selectedDays > 0 ? 49 : 0));
     const computedTotal = dailyRate * selectedDays + platformFee;
 
-    const request = await this.offerModel.create({
-      requestId: uuidv4(),
-      merchantId,
-      merchantName: merchant.name || 'Merchant',
-      merchantEmail: merchant.email || '-',
-      title: (payload.title || '').trim(),
-      category: (payload.category || '').trim(),
-      description: payload.description || '',
-      imageUrl: payload.imageUrl,
-      recommendedSize: payload.recommendedSize || '1920 x 520 px',
-      selectedDates,
-      startDate,
-      endDate,
-      selectedDays,
-      dailyRate,
-      platformFee,
-      totalPrice: Number(payload.totalPrice || computedTotal),
-      loyaltyRewardEnabled: Boolean(payload.loyaltyRewardEnabled),
-      loyaltyStarsToOffer: Number(payload.loyaltyStarsToOffer || 0),
-      loyaltyStarsPerPurchase: Number(payload.loyaltyStarsPerPurchase || 1),
-      loyaltyScorePerStar: Number(payload.loyaltyScorePerStar || 10),
-        loyaltyPointsPerPurchase: Number(payload.loyaltyPointsPerPurchase || 0), // New field
-      promotionExpiryText: payload.promotionExpiryText || '',
-      termsAndConditions: payload.termsAndConditions || '',
-      exampleUsage: payload.exampleUsage || '',
-      selectedProducts: Array.isArray(payload.selectedProducts) ? payload.selectedProducts : [],
-      status: OfferPromotionStatus.UNDER_REVIEW,
-      paymentStatus: OfferPaymentStatus.PENDING,
-      isActive: false,
-    });
+     const request = await this.offerModel.create({
+       requestId: uuidv4(),
+       merchantId,
+       merchantName: merchant.name || 'Merchant',
+       merchantEmail: merchant.email || '-',
+       title: (payload.title || '').trim(),
+       // Preserve promotional category from merchant (used for UI filtering)
+       category: (payload.category || '').trim(),
+       // Business category for matching user preferences
+       businessCategory,
+       businessSubCategory,
+       // Optional promotion tag for extra filtering
+       promotionType: payload.promoTag || '',
+       description: payload.description || '',
+       imageUrl: payload.imageUrl,
+       recommendedSize: payload.recommendedSize || '1920 x 520 px',
+       selectedDates,
+       startDate,
+       endDate,
+       selectedDays,
+       dailyRate,
+       platformFee,
+       totalPrice: Number(payload.totalPrice || computedTotal),
+       loyaltyRewardEnabled: Boolean(payload.loyaltyRewardEnabled),
+       loyaltyStarsToOffer: Number(payload.loyaltyStarsToOffer || 0),
+       loyaltyStarsPerPurchase: Number(payload.loyaltyStarsPerPurchase || 1),
+       loyaltyScorePerStar: Number(payload.loyaltyScorePerStar || 10),
+         loyaltyPointsPerPurchase: Number(payload.loyaltyPointsPerPurchase || 0),
+       promotionExpiryText: payload.promotionExpiryText || '',
+       termsAndConditions: payload.termsAndConditions || '',
+       exampleUsage: payload.exampleUsage || '',
+       selectedProducts: Array.isArray(payload.selectedProducts) ? payload.selectedProducts : [],
+       status: OfferPromotionStatus.UNDER_REVIEW,
+       paymentStatus: OfferPaymentStatus.PENDING,
+       isActive: false,
+     });
 
     if (this.kafkaService) {
       try {
@@ -256,8 +339,20 @@ export class OffersService implements OnModuleInit {
       }
     }
 
-    await this.redisService.deleteByPattern(`golo:offers:merchant:${merchantId}:*`);
-    return request;
+     await this.clearOfferCaches(merchantId, [request.requestId, String(request._id)]);
+     
+     // Clear recommendation cache for users who might match this offer's business category
+     if (businessCategory) {
+       try {
+         const pattern = `reco:deals:v2:user:*`;
+         await this.redisService.deleteByPattern(pattern);
+         this.logger.log(`[Offers] Cleared recommendation cache for new offer (category: ${businessCategory})`);
+       } catch (err) {
+         this.logger.warn('Failed to clear recommendation cache:', err.message);
+       }
+     }
+     
+     return request;
   } catch (error: any) {
     if (error?.name === 'ValidationError' || error?.name === 'CastError') {
       throw new BadRequestException(error?.message || 'Invalid offer payload');
@@ -274,6 +369,12 @@ export class OffersService implements OnModuleInit {
   }
 
   async listMerchantOffers(merchantId: string) {
+    const cacheKey = this.offerMerchantCacheKey(merchantId);
+    const cached = await this.readCache<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     // Support both merchant userId and legacy merchant profile _id stored in some rows
     const merchantProfile = await this.merchantModel.findOne({ userId: merchantId }).select('_id').lean().exec();
     const profileId = merchantProfile?._id ? String(merchantProfile._id) : null;
@@ -283,7 +384,9 @@ export class OffersService implements OnModuleInit {
       : { merchantId: merchantId };
 
     const rows = await this.offerModel.find(query).sort({ createdAt: -1 }).lean().exec();
-    return rows.map((row) => this.normalizeMerchantOfferRow(row));
+    const normalized = rows.map((row) => this.normalizeMerchantOfferRow(row));
+    await this.writeCache(cacheKey, normalized, this.cacheTtlSeconds.merchantOffers);
+    return normalized;
   }
 
   async updateMerchantOffer(requestId: string, merchantId: string, payload: any) {
@@ -343,7 +446,7 @@ export class OffersService implements OnModuleInit {
     }
 
     await request.save();
-    await this.redisService.deleteByPattern(this.offerMerchantCacheKey(merchantId));
+    await this.clearOfferCaches(merchantId, [requestId, String(request._id)]);
     return this.normalizeMerchantOfferRow(request.toObject());
   }
 
@@ -354,11 +457,17 @@ export class OffersService implements OnModuleInit {
     if (this.kafkaService) {
       try { await this.kafkaService.emit(KAFKA_TOPICS.OFFER_PROMOTION_DELETED, { requestId, merchantId }); } catch {}
     }
-    await this.redisService.deleteByPattern(this.offerMerchantCacheKey(merchantId));
+    await this.clearOfferCaches(merchantId, [requestId, String(offer._id)]);
     return offer;
   }
 
   async getPublicOfferDetails(offerId: string) {
+    const cacheKey = this.publicOfferCacheKey(offerId);
+    const cached = await this.readCache<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     let row: any = null;
 
     // Try MongoDB _id first
@@ -430,6 +539,12 @@ export class OffersService implements OnModuleInit {
       termsAndConditions: rowAny.termsAndConditions || '',
     };
 
+    await Promise.all([
+      this.writeCache(cacheKey, normalized, this.cacheTtlSeconds.publicOffer),
+      this.writeCache(this.publicOfferCacheKey(String(row._id)), normalized, this.cacheTtlSeconds.publicOffer),
+      row.requestId ? this.writeCache(this.publicOfferCacheKey(String(row.requestId)), normalized, this.cacheTtlSeconds.publicOffer) : Promise.resolve(),
+    ]);
+
     return normalized;
   }
 
@@ -442,17 +557,27 @@ export class OffersService implements OnModuleInit {
       { new: true },
     ).lean().exec();
     if (!updated) throw new BadRequestException('Failed to save template');
+    await this.clearCache(this.offerTemplateCacheKey(merchantId));
     return normalized;
   }
 
   async getOfferTemplate(merchantId: string) {
+    const cacheKey = this.offerTemplateCacheKey(merchantId);
+    const cached = await this.readCache<any>(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+
     const merchant = await this.merchantModel.findOne({ userId: merchantId }).select('offerTemplate').lean().exec();
-    return merchant?.offerTemplate || null;
+    const template = merchant?.offerTemplate || null;
+    await this.writeCache(cacheKey, template, this.cacheTtlSeconds.template);
+    return template;
   }
 
   async clearOfferTemplate(merchantId: string) {
     const updated = await this.merchantModel.findOneAndUpdate({ userId: merchantId }, { $set: { offerTemplate: null, updatedAt: new Date() } }, { new: true }).lean().exec();
     if (!updated) throw new BadRequestException('Failed to clear template');
+    await this.clearCache(this.offerTemplateCacheKey(merchantId));
     return { cleared: true };
   }
 
@@ -493,6 +618,11 @@ export class OffersService implements OnModuleInit {
       : [];
     const topDiscountOnly = Boolean(params.topDiscount);
     const activeNowOnly = params.activeNow === undefined ? true : Boolean(params.activeNow);
+    const cacheKey = this.nearbyOffersCacheKey(params);
+    const cached = await this.readCache<{ data: any[]; pagination: { page: number; limit: number; total: number; pages: number } }>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     const normalizeCategoryToken = (value: any) =>
       String(value || '')
@@ -517,21 +647,21 @@ export class OffersService implements OnModuleInit {
       return locationTokens.some((token) => address.includes(token));
     };
 
-    const matchOfferTypes = (row: any) => {
-      if (!offerTypeTokens.length) return true;
-      const title = String(row?.title || '').toLowerCase();
-      const category = String(row?.category || '').toLowerCase();
-      const blob = `${title} ${category}`;
+     const matchOfferTypes = (row: any) => {
+       if (!offerTypeTokens.length) return true;
+       const title = String(row?.title || '').toLowerCase();
+       const category = String(row?.category || '').toLowerCase();
+       const blob = `${title} ${category}`;
 
-      return offerTypeTokens.some((t) => {
-        if (!t) return false;
-        if (category === t) return true;
-        if (t === 'flat discount') return blob.includes('flat') || blob.includes('discount');
-        if (t.includes('bogo') || t.includes('buy one get')) return blob.includes('bogo') || blob.includes('buy 1 get 1') || blob.includes('buy one get one');
-        if (t === 'percentage off' || t.includes('percent') || t.includes('%')) return blob.includes('%') || blob.includes('percent') || blob.includes('percentage');
-        return blob.includes(t);
-      });
-    };
+       return offerTypeTokens.some((t) => {
+         if (!t) return false;
+         if (category === t) return true;
+         if (t === 'flat discount') return blob.includes('flat') || blob.includes('discount');
+         if (t.includes('bogo') || t.includes('buy one get')) return blob.includes('bogo') || blob.includes('buy 1 get 1') || blob.includes('buy one get one');
+         if (t === 'percentage off' || t.includes('percent') || t.includes('%')) return blob.includes('%') || blob.includes('percent') || blob.includes('percentage');
+         return blob.includes(t);
+       });
+     };
 
     const matchesSelectedCategory = (row: any) => {
       if (!categoryNeedle) return true;
@@ -560,14 +690,14 @@ export class OffersService implements OnModuleInit {
         .find({
           status: { $in: ['under_review', 'approved', 'active'] },
         })
-        .select('requestId merchantId merchantName title category totalPrice startDate endDate status createdAt imageUrl selectedProducts')
+        .select('requestId merchantId merchantName title category businessCategory businessSubCategory totalPrice startDate endDate status createdAt imageUrl selectedProducts')
         .limit(prefetchLimit)
         .maxTimeMS(7000)
         .lean()
         .exec();
     } catch (error: any) {
       this.logger.error(`Nearby offers query failed: ${error?.message || error}`);
-      return {
+      const emptyResult = {
         data: [],
         pagination: {
           page: safePage,
@@ -576,10 +706,13 @@ export class OffersService implements OnModuleInit {
           pages: 0,
         },
       };
+
+      await this.writeCache(cacheKey, emptyResult, this.cacheTtlSeconds.nearbyOffers);
+      return emptyResult;
     }
 
     if (!offerRows.length) {
-      return {
+      const emptyResult = {
         data: [],
         pagination: {
           page: safePage,
@@ -588,6 +721,9 @@ export class OffersService implements OnModuleInit {
           pages: 0,
         },
       };
+
+      await this.writeCache(cacheKey, emptyResult, this.cacheTtlSeconds.nearbyOffers);
+      return emptyResult;
     }
 
     const merchantIds = Array.from(new Set(offerRows.map((row) => String(row.merchantId))));
@@ -609,40 +745,42 @@ export class OffersService implements OnModuleInit {
     const now = new Date();
 
     if (!hasUserCoordinates && !locationNeedle) {
-      let normalized = offerRows.map((row) => {
-        const merchant = merchantsByUserId.get(String(row.merchantId));
-        const pricing = this.computeOfferPricing(row);
-        const startsAt = row.startDate ? new Date(row.startDate) : null;
-        const endsAt = row.endDate ? new Date(row.endDate) : null;
-        const isActiveNow = Boolean(startsAt && endsAt) && startsAt <= now && endsAt >= now;
-        return {
-          offerId: String(row._id),
-          requestId: row.requestId,
-          title: row.title,
-          category: row.category,
-          imageUrl: row.imageUrl || '',
-          totalPrice: Number(row.totalPrice || 0),
-          displayPrice: pricing.displayPrice,
-          discountPercent: pricing.discountPercent,
-          startsAt: row.startDate,
-          endsAt: row.endDate,
-          status: row.status,
-          isActiveNow,
-          distanceKm: null,
-          merchant: {
-            merchantId: String(row.merchantId),
-            name: merchant?.storeName || row.merchantName || 'Merchant',
-            category: merchant?.storeCategory || '',
-            subCategory: merchant?.storeSubCategory || '',
-            address: merchant?.storeLocation || '',
-            latitude: merchant?.storeLocationLatitude || null,
-            longitude: merchant?.storeLocationLongitude || null,
-            profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
-          },
-          selectedProducts: pricing.selectedProducts,
-          createdAt: row.createdAt,
-        };
-      });
+       let normalized = offerRows.map((row) => {
+         const merchant = merchantsByUserId.get(String(row.merchantId));
+         const pricing = this.computeOfferPricing(row);
+         const startsAt = row.startDate ? new Date(row.startDate) : null;
+         const endsAt = row.endDate ? new Date(row.endDate) : null;
+         const isActiveNow = Boolean(startsAt && endsAt) && startsAt <= now && endsAt >= now;
+         return {
+           offerId: String(row._id),
+           requestId: row.requestId,
+           title: row.title,
+           category: row.category,
+           businessCategory: row.businessCategory || '',
+           businessSubCategory: row.businessSubCategory || '',
+           imageUrl: row.imageUrl || '',
+           totalPrice: Number(row.totalPrice || 0),
+           displayPrice: pricing.displayPrice,
+           discountPercent: pricing.discountPercent,
+           startsAt: row.startDate,
+           endsAt: row.endDate,
+           status: row.status,
+           isActiveNow,
+           distanceKm: null,
+           merchant: {
+             merchantId: String(row.merchantId),
+             name: merchant?.storeName || row.merchantName || 'Merchant',
+             category: merchant?.storeCategory || '',
+             subCategory: merchant?.storeSubCategory || '',
+             address: merchant?.storeLocation || '',
+             latitude: merchant?.storeLocationLatitude || null,
+             longitude: merchant?.storeLocationLongitude || null,
+             profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
+           },
+           selectedProducts: pricing.selectedProducts,
+           createdAt: row.createdAt,
+         };
+       });
 
       // Only show offers that are within the visibility window (startDate <= now <= endDate).
       if (activeNowOnly) {
@@ -676,10 +814,13 @@ export class OffersService implements OnModuleInit {
       const pages = Math.ceil(total / safeLimit);
       const start = (safePage - 1) * safeLimit;
 
-      return {
+      const result = {
         data: normalized.slice(start, start + safeLimit),
         pagination: { page: safePage, limit: safeLimit, total, pages },
       };
+
+      await this.writeCache(cacheKey, result, this.cacheTtlSeconds.nearbyOffers);
+      return result;
     }
 
     let normalized = offerRows.map((row) => {
@@ -698,33 +839,35 @@ export class OffersService implements OnModuleInit {
       const endsAt = row.endDate ? new Date(row.endDate) : null;
       const isActiveNow = Boolean(startsAt && endsAt) && startsAt <= now && endsAt >= now;
 
-      return {
-        offerId: String(row._id),
-        requestId: row.requestId,
-        title: row.title,
-        category: row.category,
-        imageUrl: row.imageUrl || '',
-        totalPrice: Number(row.totalPrice || 0),
-        displayPrice: pricing.displayPrice,
-        discountPercent: pricing.discountPercent,
-        startsAt: row.startDate,
-        endsAt: row.endDate,
-        status: row.status,
-        isActiveNow,
-        distanceKm,
-        merchant: {
-          merchantId: String(row.merchantId),
-          name: merchant?.storeName || row.merchantName || 'Merchant',
-          category: merchant?.storeCategory || '',
-          subCategory: merchant?.storeSubCategory || '',
-          address: merchant?.storeLocation || '',
-          latitude: hasMerchantCoordinates ? latitude : null,
-          longitude: hasMerchantCoordinates ? longitude : null,
-          profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
-        },
-        selectedProducts: pricing.selectedProducts,
-        createdAt: row.createdAt,
-      };
+       return {
+         offerId: String(row._id),
+         requestId: row.requestId,
+         title: row.title,
+         category: row.category,
+         businessCategory: row.businessCategory || '',
+         businessSubCategory: row.businessSubCategory || '',
+         imageUrl: row.imageUrl || '',
+         totalPrice: Number(row.totalPrice || 0),
+         displayPrice: pricing.displayPrice,
+         discountPercent: pricing.discountPercent,
+         startsAt: row.startDate,
+         endsAt: row.endDate,
+         status: row.status,
+         isActiveNow,
+         distanceKm,
+         merchant: {
+           merchantId: String(row.merchantId),
+           name: merchant?.storeName || row.merchantName || 'Merchant',
+           category: merchant?.storeCategory || '',
+           subCategory: merchant?.storeSubCategory || '',
+           address: merchant?.storeLocation || '',
+           latitude: hasMerchantCoordinates ? latitude : null,
+           longitude: hasMerchantCoordinates ? longitude : null,
+           profilePhoto: merchant?.profilePhoto || merchant?.shopPhoto || '',
+         },
+         selectedProducts: pricing.selectedProducts,
+         createdAt: row.createdAt,
+       };
     });
 
     // Only show offers that are within the visibility window (startDate <= now <= endDate).
@@ -791,6 +934,8 @@ export class OffersService implements OnModuleInit {
     const start = (safePage - 1) * safeLimit;
     const data = normalized.slice(start, start + safeLimit);
 
-    return { data, pagination: { page: safePage, limit: safeLimit, total, pages } };
+    const result = { data, pagination: { page: safePage, limit: safeLimit, total, pages } };
+    await this.writeCache(cacheKey, result, this.cacheTtlSeconds.nearbyOffers);
+    return result;
   }
 }

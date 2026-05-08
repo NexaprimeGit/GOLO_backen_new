@@ -16,6 +16,7 @@ import { MerchantProductsModule } from './merchant-products/merchant-products.mo
 import { MerchantDashboardModule } from './merchant-dashboard/merchant-dashboard.module';
 import { BannersModule } from './banners/banners.module';
 import { OffersModule } from './offers/offers.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 import { MerchantsModule } from './merchants/merchants.module';
 import { OrdersModule } from './orders/orders.module';
 import { VouchersModule } from './vouchers/vouchers.module';
@@ -71,6 +72,7 @@ const logger = new Logger('MongoDB');
     MerchantDashboardModule,
     BannersModule,
     OffersModule,
+    RecommendationsModule,
     OrdersModule,
     VouchersModule,
     ReviewsModule,

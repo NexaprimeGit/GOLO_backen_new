@@ -22,6 +22,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
 import { OfferLikeHistory, OfferLikeHistoryDocument } from '../offers/schemas/offer-like-history.schema';
 import { OfferPromotion, OfferPromotionDocument } from '../offers/schemas/offer-promotion.schema';
+import { RedisService } from '../common/services/redis.service';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -107,6 +108,7 @@ export class UsersService implements OnModuleInit {
     private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
+    @Optional() private readonly redisService?: RedisService,
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
     @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
     @Optional() @InjectModel('PendingMerchantLocation') private pendingLocationModel?: Model<any>,
@@ -604,6 +606,9 @@ export class UsersService implements OnModuleInit {
     if (updateData.profile?.interests && Array.isArray(updateData.profile.interests)) {
       allowedUpdates['profile.interests'] = updateData.profile.interests;
     }
+    if (updateData.preferredCategories && Array.isArray(updateData.preferredCategories)) {
+      allowedUpdates['preferredCategories'] = updateData.preferredCategories;
+    }
 
     this.logger.debug(`Updates to apply: ${JSON.stringify(Object.keys(allowedUpdates))}`);
 
@@ -615,6 +620,10 @@ export class UsersService implements OnModuleInit {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (this.redisService && allowedUpdates.preferredCategories) {
+      await this.redisService.deleteByPattern(`reco:deals:user:${userId}:*`);
     }
 
     this.logger.log(`Profile updated successfully for user: ${userId}`);
@@ -1839,6 +1848,7 @@ export class UsersService implements OnModuleInit {
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
       profilePhoto: user.profilePhoto || null,
+      preferredCategories: Array.isArray(user.preferredCategories) ? user.preferredCategories : [],
       merchantProfile,
       iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,
