@@ -6,12 +6,15 @@ WORKDIR /app
 
 # Install build tools needed for native modules (bcrypt, node-gyp)
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends python3 build-essential git \
+	&& apt-get install -y --no-install-recommends python3 build-essential git make g++ \
 	&& rm -rf /var/lib/apt/lists/*
+
+# Set npm to use python3 explicitly for node-gyp
+RUN npm config set python /usr/bin/python3
 
 # Install dependencies and build
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci
 
 COPY . .
 RUN npm run build
@@ -32,14 +35,11 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& npm ci --only=production --no-audit --progress=false
 
-# Optional: rebuild native modules if necessary (best-effort)
-RUN npm rebuild bcrypt --build-from-source || true
-
 # Copy built output and scripts from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/update-merchant-categories.js ./update-merchant-categories.js
-COPY --from=builder /app/check-merchants.js ./check-merchants.js
+COPY --from=builder /app/update-merchant-categories.js ./
+COPY --from=builder /app/check-merchants.js ./
 
 # Adjust ownership and switch to unprivileged user
 RUN chown -R app:app /app
