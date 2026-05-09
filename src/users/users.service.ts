@@ -23,6 +23,7 @@ import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/pay
 import { OfferLikeHistory, OfferLikeHistoryDocument } from '../offers/schemas/offer-like-history.schema';
 import { OfferPromotion, OfferPromotionDocument } from '../offers/schemas/offer-promotion.schema';
 import { RedisService } from '../common/services/redis.service';
+import { validatePreferredCategories, normalizeCategories } from '../common/constants/categories';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -606,8 +607,28 @@ export class UsersService implements OnModuleInit {
     if (updateData.profile?.interests && Array.isArray(updateData.profile.interests)) {
       allowedUpdates['profile.interests'] = updateData.profile.interests;
     }
-    if (updateData.preferredCategories && Array.isArray(updateData.preferredCategories)) {
-      allowedUpdates['preferredCategories'] = updateData.preferredCategories;
+    
+    // Bug Fix #2: Validate preferredCategories
+    if (updateData.preferredCategories !== undefined) {
+      if (Array.isArray(updateData.preferredCategories)) {
+        // Validate categories
+        const validation = validatePreferredCategories(updateData.preferredCategories);
+        if (!validation.valid) {
+          const errorMsg = validation.errors.join('; ');
+          this.logger.warn(`Invalid categories provided: ${errorMsg}`);
+          throw new BadRequestException(`Invalid preferred categories: ${errorMsg}`);
+        }
+        
+        // Normalize: remove duplicates and ensure valid format
+        const normalizedCategories = normalizeCategories(updateData.preferredCategories);
+        allowedUpdates['preferredCategories'] = normalizedCategories;
+        this.logger.debug(`Normalized ${updateData.preferredCategories.length} categories → ${normalizedCategories.length}`);
+      } else if (updateData.preferredCategories === null) {
+        // Allow clearing categories
+        allowedUpdates['preferredCategories'] = [];
+      } else {
+        throw new BadRequestException('preferredCategories must be an array');
+      }
     }
 
     this.logger.debug(`Updates to apply: ${JSON.stringify(Object.keys(allowedUpdates))}`);

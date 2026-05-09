@@ -19,7 +19,8 @@
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f",
     "kafka:create-topics": "node scripts/create-topics.js",
-    "merchant:backfill-coords": "node scripts/backfill-merchant-coordinates.js"
+    "merchant:backfill-coords": "node scripts/backfill-merchant-coordinates.js",
+    "db:create-indexes": "node scripts/create-mongodb-indexes.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.22",

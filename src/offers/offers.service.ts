@@ -10,6 +10,9 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { Merchant, MerchantDocument } from '../users/schemas/merchant.schema';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 
+// Bug Fix #4: Default placeholder image for offers without imageUrl
+const DEFAULT_OFFER_IMAGE = '/images/deal1.jpg';
+
 @Injectable()
 export class OffersService implements OnModuleInit {
   private readonly logger = new Logger(OffersService.name);
@@ -189,10 +192,17 @@ export class OffersService implements OnModuleInit {
       return value > 0 ? sum + value : sum;
     }, 0);
 
+    // Calculate actual aggregate discount:
+    const totalOriginal = selectedProducts.reduce((sum, p) => sum + Number(p.originalPrice || 0), 0);
+    const totalOffer = summedOfferPrice;
+    const correctDiscountPercent = totalOriginal > 0 
+      ? Math.round(((totalOriginal - totalOffer) / totalOriginal) * 100)
+      : 0;
+
     return {
       selectedProducts,
       displayPrice: summedOfferPrice > 0 ? summedOfferPrice : Number(row?.totalPrice || 0),
-      discountPercent: Math.round(computedBestDiscountPercent),
+      discountPercent: correctDiscountPercent,
     };
   }
 
@@ -201,11 +211,17 @@ export class OffersService implements OnModuleInit {
     const startsAt = row?.startDate || row?.selectedDates?.[0] || null;
     const endsAt = row?.endDate || (Array.isArray(row?.selectedDates) ? row.selectedDates[row.selectedDates.length - 1] : null) || null;
 
+    // Bug Fix #5: Ensure consistent ID handling
+    // Note: API returns both:
+    //   - offerId: MongoDB ObjectId as string (from _id)
+    //   - requestId: Unique identifier assigned at offer creation (more stable)
+    // Clients should prefer requestId for navigation when available
     return {
       ...row,
       title: row?.title || '',
       category: row?.category || '',
-      imageUrl: row?.imageUrl || '',
+      // Bug Fix #4: Use default image if missing
+      imageUrl: row?.imageUrl || DEFAULT_OFFER_IMAGE,
       totalPrice: Number(row?.totalPrice || 0),
       displayPrice: pricing.displayPrice,
       discountPercent: pricing.discountPercent,
@@ -758,7 +774,8 @@ export class OffersService implements OnModuleInit {
            category: row.category,
            businessCategory: row.businessCategory || '',
            businessSubCategory: row.businessSubCategory || '',
-           imageUrl: row.imageUrl || '',
+           // Bug Fix #4: Use default image if missing
+           imageUrl: row.imageUrl || DEFAULT_OFFER_IMAGE,
            totalPrice: Number(row.totalPrice || 0),
            displayPrice: pricing.displayPrice,
            discountPercent: pricing.discountPercent,
@@ -846,7 +863,8 @@ export class OffersService implements OnModuleInit {
          category: row.category,
          businessCategory: row.businessCategory || '',
          businessSubCategory: row.businessSubCategory || '',
-         imageUrl: row.imageUrl || '',
+         // Bug Fix #4: Use default image if missing
+         imageUrl: row.imageUrl || DEFAULT_OFFER_IMAGE,
          totalPrice: Number(row.totalPrice || 0),
          displayPrice: pricing.displayPrice,
          discountPercent: pricing.discountPercent,
