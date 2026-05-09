@@ -9,8 +9,8 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends python3 build-essential git make g++ \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Set npm to use python3 explicitly for node-gyp
-RUN npm config set python /usr/bin/python3
+# Set python for node-gyp to use
+ENV npm_config_python=/usr/bin/python3
 
 # Install dependencies and build
 COPY package*.json ./
