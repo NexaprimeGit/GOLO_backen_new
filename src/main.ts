@@ -77,7 +77,7 @@ async function bootstrap() {
   });
 
   const port = configService.get('config.service.port');
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   logger.log(`HTTP mode enabled. Ads microservice is running on port ${port}`);
 }
 bootstrap();
