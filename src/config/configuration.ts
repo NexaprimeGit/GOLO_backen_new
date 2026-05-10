@@ -18,7 +18,7 @@ export default registerAs('config', () => ({
   
   service: {
     name: process.env.SERVICE_NAME || 'ads-service',
-    port: parseInt(process.env.PORT, 10) || 3002,
+    port: Number.parseInt(process.env.PORT, 10) || 3002,
   },
   
   cors: {

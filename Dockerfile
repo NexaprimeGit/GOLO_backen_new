@@ -13,9 +13,8 @@ RUN apt-get update \
 ENV npm_config_python=/usr/bin/python3
 
 # Install dependencies and build
-COPY package*.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
-
 COPY . .
 RUN npm run build
 
@@ -28,12 +27,13 @@ WORKDIR /app
 # Create app user and group (use non-root for better security)
 RUN groupadd -r app && useradd -r -g app -s /sbin/nologin app || true
 
-# Copy package metadata from builder and install production deps
+# Copy package metadata and node_modules from builder
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl ca-certificates \
-	&& rm -rf /var/lib/apt/lists/* \
-	&& npm ci --only=production --no-audit --progress=false
+	&& rm -rf /var/lib/apt/lists/*
 
 # Copy built output and scripts from builder
 COPY --from=builder /app/dist ./dist
