@@ -1,48 +1,79 @@
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
-    container_name: zookeeper
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: golo-backend
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      NODE_ENV: production
+      PORT: "3002"
+      MONGODB_URI: ${MONGODB_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ENABLE_KAFKA: "true"
+      KAFKA_BROKERS: "kafka:9092"
+      ENABLE_REDIS: "true"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASS:-}
     ports:
-      - "2181:2181"
+      - "3002:3002"
+    depends_on:
+      - kafka
+      - redis
     networks:
-      - app-network
+      - golo-net
 
   kafka:
-    image: confluentinc/cp-kafka:7.6.1
+    image: bitnami/kafka:3.7
     container_name: kafka
     restart: unless-stopped
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
+    env_file:
+      - .env
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:29092"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    # Optional: host-only access to Kafka from the VPS (e.g. for debugging). Containers use `kafka:9092`.
+    ports:
+      - "127.0.0.1:29092:29092"
+    volumes:
+      - kafka_data:/bitnami/kafka
     networks:
-      - app-network
+      - golo-net
 
   redis:
     image: redis:7.4-alpine
     container_name: redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--appendonly", "yes"]
+    env_file:
+      - .env
+    command:
+      - sh
+      - -c
+      - |
+        redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD:-}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASS:-}
+    volumes:
+      - redis_data:/data
     networks:
-      - app-network
+      - golo-net
+
+volumes:
+  kafka_data:
+  redis_data:
 
 networks:
-  app-network:
+  golo-net:
     driver: bridge
