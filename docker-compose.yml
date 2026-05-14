@@ -1,79 +1,114 @@
+version: '3.8'
+
 services:
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: golo-backend
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      PORT: "3002"
-      MONGODB_URI: ${MONGODB_URI}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      ENABLE_KAFKA: "true"
-      KAFKA_BROKERS: "kafka:9092"
-      ENABLE_REDIS: "true"
-      REDIS_HOST: "redis"
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD: ${REDIS_PASS:-}
+  traefik:
+    image: traefik:2.10
+    command: >
+      --providers.docker=true
+      --providers.docker.exposedbydefault=false
+      --entrypoints.web.address=:80
+      --entrypoints.websecure.address=:443
+      --certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}
+      --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      --certificatesresolvers.le.acme.tlschallenge=true
     ports:
-      - "3002:3002"
-    depends_on:
-      - kafka
-      - redis
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    restart: unless-stopped
     networks:
-      - golo-net
+      - backend
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    restart: unless-stopped
+    networks:
+      - backend
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
-    container_name: kafka
-    restart: unless-stopped
-    env_file:
-      - .env
+    depends_on:
+      - zookeeper
     environment:
-      KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_NODE_ID: "0"
-      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,CONTROLLER://:9093"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:29092"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
-      ALLOW_PLAINTEXT_LISTENER: "yes"
-    # Optional: host-only access to Kafka from the VPS (e.g. for debugging). Containers use `kafka:9092`.
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      # Advertise internal 'kafka' by default. For external access set KAFKA_ADVERTISED_HOST to your VPS public IP or domain.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_ADVERTISED_HOST:-kafka}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     ports:
-      - "127.0.0.1:29092:29092"
-    volumes:
-      - kafka_data:/bitnami/kafka
+      - "9092:9092"
+    restart: unless-stopped
     networks:
-      - golo-net
+      - backend
 
   redis:
     image: redis:7.4-alpine
-    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
     restart: unless-stopped
-    env_file:
-      - .env
-    command:
-      - sh
-      - -c
-      - |
-        redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD:-}"
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASS:-}
-    volumes:
-      - redis_data:/data
     networks:
-      - golo-net
+      - backend
+
+  golo-backend:
+    build: .
+    image: golo-backend:latest
+    env_file: .env
+    depends_on:
+      - kafka
+      - redis
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - REDIS_HOST=redis
+    # Expose to Traefik when serving via domain
+    labels:
+      # - "traefik.enable=true"
+      # - "traefik.http.routers.golo.rule=Host(`${GATEWAY_HOST}`)"
+      # - "traefik.http.routers.golo.entrypoints=websecure"
+      # - "traefik.http.routers.golo.tls.certresolver=le"
+      # - "traefik.http.services.golo.loadbalancer.server.port=3002"
+          - traefik.enable=true
+
+          - traefik.http.routers.backend.rule=Host(`api.golo.co.in`)
+
+          - traefik.http.routers.backend.entrypoints=websecure
+
+          - traefik.http.routers.backend.tls=true
+
+          - traefik.http.routers.backend.tls.certresolver=letsencrypt
+
+          - traefik.http.services.backend.loadbalancer.server.port=3002
+    # Keep 3002 published so you can access by IP:port for testing
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+    networks:
+      - backend
 
 volumes:
-  kafka_data:
-  redis_data:
+  traefik_letsencrypt:
 
 networks:
-  golo-net:
+  backend:
     driver: bridge
+
+# Usage notes:
+# - Create a production `.env` next to this file and secure it (chmod 600).
+# - Provide these environment variables when starting or in a host-level env file:
+#   - LETSENCRYPT_EMAIL=you@example.com
+#   - GATEWAY_HOST=api.yourdomain.com
+#   - (optional) KAFKA_ADVERTISED_HOST=PUBLIC_IP_OR_DOMAIN
+# - Start with: `docker compose -f docker-compose.prod.yml up -d --build`
